@@ -62,7 +62,11 @@ jobs:
           mkdir -p build/dmg
           cp -R "dist/TCG Catalog.app" build/dmg/
           ln -s /Applications build/dmg/Applications
-          hdiutil create -volname "TCG Catalog" -srcfolder build/dmg -ov -format UDZO "dist/TCG-Catalog-${APP_VERSION}-${{ matrix.label }}.dmg"
+          # hdiutil on the hosted runners sometimes fails with "Resource busy": retry
+          for i in 1 2 3 4 5; do
+            hdiutil create -volname "TCG Catalog" -srcfolder build/dmg -ov -format UDZO "dist/TCG-Catalog-${APP_VERSION}-${{ matrix.label }}.dmg" && break
+            [ "$i" = 5 ] && exit 1; sleep 10
+          done
 
       - name: Linux AppImage
         if: runner.os == 'Linux'
