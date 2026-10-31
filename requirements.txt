@@ -1,0 +1,9 @@
+# Installed into ./venv by install.sh / install.bat
+requests>=2.31
+Pillow>=10.0
+opencv-python-headless>=4.9   # headless build: no GUI toolkit needed (the web pages show the camera)
+ImageHash>=4.3
+numpy>=1.26
+psutil>=5.9                   # start/stop the scanner from the app on Windows, macOS and Linux
+qrcode>=7.4                   # QR code for connecting the phone
+cryptography>=42              # makes the phone page's HTTPS certificate when openssl isn't installed

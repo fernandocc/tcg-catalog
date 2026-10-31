@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scanner · TCG Catalog</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  #wrap { display: grid; grid-template-columns: minmax(300px, 420px) minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (max-width: 920px) { #wrap { grid-template-columns: 1fr; } }
+  #left { position: sticky; top: calc(var(--bar-h) + 16px); }
+  @media (max-width: 920px) { #left { position: static; } }
+  #seeing { margin-top: 12px; }
+  #framing { margin-top: 12px; }
+  #last { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 26px; align-items: center; }
+  @media (max-width: 680px) { #last { grid-template-columns: 1fr; text-align: center; } #last .info { align-items: center; } }
+  #lastImg img { max-height: 320px; max-width: 100%; }
+  #last .info { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; }
+  #lastName { font-size: 1.85rem; font-weight: 750; letter-spacing: -0.025em; line-height: 1.1; }
+  #lastName .num { color: var(--text-3); font-weight: 500; font-size: 0.6em; }
+  #lastMeta { color: var(--text-2); font-size: 0.9rem; }
+  #histPanel { margin-top: 18px; }
+  #hist { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 12px; max-height: calc(100vh - 520px); min-height: 260px; overflow-y: auto; padding: 2px 4px 4px 2px; }
+  .h { position: relative; cursor: pointer; border-radius: 10px; padding: 6px; background: rgba(0,0,0,0.2); border: 1px solid var(--line); transition: border-color .15s, transform .12s; }
+  .h:hover { transform: translateY(-2px); border-color: var(--line-2); }
+  .h img { width: 100%; display: block; border-radius: 6px; }
+  .h.dup { border-color: var(--warn-line); } .h.new { border-color: var(--good-line); }
+  .h.cur { box-shadow: 0 0 0 2px var(--accent); }
+  .h .n { position: absolute; top: 10px; left: 10px; font-size: 0.68rem; font-weight: 700; padding: 1px 7px; border-radius: 6px; background: rgba(7,9,15,0.82); }
+  .h .t { margin-top: 5px; font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .h .s { font-size: 0.7rem; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Scanner</div>
+      <h1>Live scanner</h1>
+      <div class="sub">What the camera sees, the last card it added, and everything scanned in this batch.</div>
+    </div>
+  </div>
+  <div id="wrap">
+    <section id="left" class="panel">
+      <div class="panel-head"><h2>Camera</h2><span class="pill" id="liveTag"><i class="dot off"></i>offline</span></div>
+      <div id="frameWrap" class="camframe stale">
+        <img id="frame" src="live_cam.jpg" alt="">
+        <div class="nofeed"><b>No live picture</b><span id="noFeedMsg">Start the scanner in the top bar, then tap <b>Start camera</b> on the phone.</span></div>
+      </div>
+      <div id="framing" class="banner bad"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg><span>Can’t see the whole Slinger — the phone may have moved or zoomed. Re-centre it so the full card is in view.</span></div>
+      <div id="seeing" class="pill">…</div>
+    </section>
+    <div>
+      <section class="panel">
+        <div class="panel-head"><h2>Last scanned</h2><span class="faint" id="lastMeta"></span></div>
+        <div id="lastEmpty" class="empty-state"><i data-icon="camera"></i><b>Waiting for the first card</b>Put a card in the Slinger — it’s added automatically.</div>
+        <div id="last" style="display:none">
+          <div id="lastImg" class="cardimg"></div>
+          <div class="info">
+            <div id="lastName"></div>
+            <div id="lastSet" class="setbadge"></div>
+            <div id="lastBanner" class="banner dup"></div>
+            <div id="lastNew" class="banner good"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span>New to your collection — file it by set.</span></div>
+            <div id="lastFin" class="fin"></div>
+          </div>
+        </div>
+      </section>
+      <section class="panel" id="histPanel">
+        <div class="panel-head"><h2>This batch</h2><span class="faint" id="cnt"></span></div>
+        <div id="hist"></div>
+      </section>
+    </div>
+  </div>
+</main>
+<script src="shared.js"></script>
+<script>
+let camLive = false;   // scanner running and the phone sending pictures (from the top bar status)
+const $ = id => document.getElementById(id);
+let cards = [], shown = -1, lastAt = null, lastFrameOk = 0;
+
+/* the "Last scanned" card stays on the newest scan until another is added (or you click one in the history) */
+function showCard(k) {
+  shown = k;
+  const c = cards[k];
+  $("lastEmpty").style.display = c ? "none" : "block";
+  $("last").style.display = c ? "grid" : "none";
+  $("lastMeta").textContent = c ? "Scan #" + (k + 1) + " of " + cards.length + (k === cards.length - 1 ? " · newest" : "") : "";
+  renderHistory();
+  if (!c) return;
+  $("lastImg").className = "cardimg " + (c.duplicate ? "dup" : "new");
+  $("lastImg").innerHTML = c.image ? '<img src="' + esc(c.image) + '" alt="">' : "";
+  $("lastName").innerHTML = esc(c.name) + (c.number ? ' <span class="num">#' + esc(c.number) + "</span>" : "");
+  $("lastSet").textContent = c.needs_review ? "Needs review" : c.set;
+  $("lastSet").className = "setbadge" + (c.needs_review ? " review" : "");
+  const b = $("lastBanner");
+  b.classList.toggle("show", !!c.duplicate);
+  b.innerHTML = icon("alert") + "<span>" + (c.in_prior_batch ? "Duplicate — already in an earlier batch. Dupes pile." : "Duplicate — already scanned in this batch. Dupes pile.") + "</span>";
+  $("lastNew").classList.toggle("show", !c.duplicate);
+  showFinishes($("lastFin"), c.card_id, true);
+}
+function renderHistory() {
+  $("cnt").textContent = cards.length ? cards.length + " scanned · " + cards.filter(c => !c.duplicate).length + " new · " + cards.filter(c => c.duplicate).length + " duplicates" : "";
+  const h = $("hist"), top = h.scrollTop;
+  h.innerHTML = cards.map((c, k) => ({ c, k })).reverse().map(({ c, k }) =>
+    '<div class="h ' + (c.duplicate ? "dup" : "new") + (k === shown ? " cur" : "") + '" data-k="' + k + '" title="' + esc(c.name) + " — " + esc(c.set || "") + '">' +
+    '<img src="' + esc(c.image || "") + '" loading="lazy" alt=""><span class="n">#' + (k + 1) + '</span><div class="t">' + esc(c.name) + '</div><div class="s">' + esc(c.set || "") + "</div></div>").join("") ||
+    '<div class="faint">Scanned cards will show up here.</div>';
+  h.scrollTop = top;
+}
+$("hist").addEventListener("click", e => { const t = e.target.closest(".h"); if (t) showCard(+t.dataset.k); });
+
+async function loadCards() { cards = await (await fetch("viewer_data.json?t=" + Date.now())).json(); }
+function refreshFrame() {
+  const im = new Image();
+  if (!camLive) return;                       // nothing new to show while the scanner/phone is off
+  im.onload = () => { $("frame").src = im.src; lastFrameOk = Date.now(); $("frameWrap").classList.remove("stale"); };
+  im.src = "live_cam.jpg?t=" + Date.now();
+}
+async function refreshStatus() {
+  let st;
+  try { st = await (await fetch("live_status.json?t=" + Date.now())).json(); }
+  catch (e) { $("seeing").textContent = "Scanner not running"; $("seeing").className = "pill"; return; }
+  $("seeing").innerHTML = st.seeing ? icon("check") + esc(st.seeing.name) + ' <span class="faint">' + esc(st.seeing.set) + "</span>" : "No card in view";
+  $("seeing").className = "pill" + (st.seeing ? " good" : "");
+  $("framing").classList.toggle("show", camLive && st.framing === "no_well");
+  const at = st.last_added ? st.last_added.at + "|" + st.last_added.card_id : "";
+  if (lastAt === null) { lastAt = at; return; }
+  if (at !== lastAt) {                          // a new card was added (or the batch was reset)
+    lastAt = at;
+    await loadCards();
+    showCard(cards.length - 1);
+  }
+}
+document.addEventListener("appstatus", e => {
+  const s = e.detail, live = s.scanner && s.phone_streaming;
+  camLive = live;
+  if (!live) $("frameWrap").classList.add("stale");
+  $("noFeedMsg").innerHTML = !s.scanner ? "Press <b>Start</b> next to <b>Scanner</b> in the top bar." : "Waiting for the phone — open the phone page and tap <b>Start camera</b>.";
+  $("liveTag").innerHTML = '<i class="dot ' + (live ? "on" : s.scanner ? "wait" : "off") + '"></i>' + (live ? "live" : s.scanner ? "waiting for phone" : "scanner off");
+});
+loadCards().then(() => showCard(cards.length - 1));
+setInterval(refreshFrame, 300);
+setInterval(refreshStatus, 400);
+setInterval(() => { if (Date.now() - lastFrameOk > 3000) $("frameWrap").classList.add("stale"); }, 1000);
+refreshFrame(); refreshStatus();
+</script>
+<script src="app.js"></script>
+</body>
+</html>

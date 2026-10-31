@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Help · TCG Catalog</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  .steps { display: grid; gap: 14px; counter-reset: s; }
+  .step { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .step::before { counter-increment: s; content: counter(s); width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center;
+    font-weight: 800; font-size: 1.15rem; color: #0b0d14; background: var(--accent-grad); box-shadow: 0 8px 22px rgba(139,124,255,0.3); }
+  .step h3 { margin: 4px 0 6px; font-size: 1.12rem; letter-spacing: -0.01em; }
+  .step p, .step li { color: var(--text-2); margin: 0 0 6px; }
+  .step ul { margin: 4px 0 0; padding-left: 18px; }
+  h2.sec { margin: 34px 0 12px; font-size: 1.25rem; letter-spacing: -0.015em; }
+  .faq { display: grid; gap: 10px; }
+  .faq details { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 16px; }
+  .faq summary { cursor: pointer; font-weight: 600; }
+  .faq details p, .faq details li { color: var(--text-2); }
+  code { font-family: var(--mono); font-size: 0.88em; background: rgba(0,0,0,0.35); border: 1px solid var(--line); padding: 1px 6px; border-radius: 6px; }
+  .sounds { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+</style>
+</head>
+<body>
+<main class="page page-narrow">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Help</div>
+      <h1>How to use TCG Catalog</h1>
+      <div class="sub">Everything happens in this browser window — no commands to type.</div>
+    </div>
+  </div>
+
+  <div class="steps">
+    <section class="panel step"><div>
+      <h3>Install the card data (first time only)</h3>
+      <p>The app installs it by itself the first time it opens (a progress bar shows on the <a href="/">Home</a> page for a few seconds). Later, use <b>Check for new sets</b> on Home when a new expansion comes out (needs internet).</p>
+    </div></section>
+
+    <section class="panel step"><div>
+      <h3>Set up the camera</h3>
+      <ul>
+        <li>Put the phone above the card slinger, camera pointing down, so the <b>whole dark well</b> is in view with a little margin around it.</li>
+        <li>Use a dark, matte background and soft light from the sides — reflections make cards harder to read.</li>
+        <li>Keep the phone plugged in; scanning for a long time uses battery.</li>
+      </ul>
+    </div></section>
+
+    <section class="panel step"><div>
+      <h3>Connect the phone</h3>
+      <ul>
+        <li>Phone and computer must be on the <b>same Wi-Fi</b>.</li>
+        <li>On Home, scan the <b>QR code</b> with the phone’s camera (or type the address shown).</li>
+        <li>The phone warns that the connection “is not private”. That’s expected — the page comes from your own computer. Choose <b>Advanced → Proceed</b>. You only do this once.</li>
+        <li>With the slinger <b>empty</b>, tap <b>Start camera</b> and allow camera access. It measures the light for two seconds and locks it.</li>
+      </ul>
+    </div></section>
+
+    <section class="panel step"><div>
+      <h3>Scan</h3>
+      <p>Press <b>Start</b> next to <b>Scanner</b> in the top bar, open <a href="scan_sort.html">Scan &amp; Sort</a>, then feed cards one at a time. Each card is added by itself when it’s recognised and the phone plays a sound:</p>
+      <div class="sounds"><span class="pill good">Rising ping — new card</span><span class="pill warn">Two low beeps — duplicate</span></div>
+      <p style="margin-top:8px">If a card isn’t recognised within a couple of seconds the phone flashes its torch to help. Foil cards can be stubborn — reposition them to avoid glare.</p>
+    </div></section>
+
+    <section class="panel step"><div>
+      <h3>Sort the stack</h3>
+      <p>Keep the scanned cards in the order you fed them. In the <a href="sort_viewer.html">Sorter</a>, go card by card (<kbd>Space</kbd> = next) and drop each one in the set shown. Duplicates are flagged in amber; the <b>Report</b> lists the new cards by position so you can pull them out fast.</p>
+      <p>Wrong card? Press <b>Wrong card — delete</b>. Foil? Pick <b>Holofoil</b> or <b>Reverse holo</b>.</p>
+    </div></section>
+
+    <section class="panel step"><div>
+      <h3>Finish the batch</h3>
+      <p>When the stack is filed, press <b>Finish batch</b> (top bar, click twice). The batch is backed up and saved to your collection, and the scanner is ready for the next stack. Browse everything in <a href="view_collection.html">Collection</a>.</p>
+    </div></section>
+  </div>
+
+  <h2 class="sec">Troubleshooting</h2>
+  <div class="faq">
+    <details><summary>The phone page won’t open (“site can’t be reached”)</summary>
+      <p>Check both devices are on the same Wi-Fi and that the camera server is running (green dot in the top bar). A firewall may be blocking it:</p>
+      <ul>
+        <li><b>Windows:</b> when asked “Allow Python on private networks?”, choose <b>Allow</b>. If you missed it, search Start for “Allow an app through Windows Firewall” and tick Python.</li>
+        <li><b>Mac:</b> allow incoming connections for Python when macOS asks.</li>
+        <li><b>Linux with ufw:</b> run <code>sudo ufw allow from 192.168.0.0/16 to any port 8443 proto tcp</code> once.</li>
+      </ul>
+    </details>
+    <details><summary>The top bar says “Waiting for phone”</summary>
+      <p>The phone page is closed or the phone went to sleep. Wake it, reopen the page and tap <b>Start camera</b>. Use <b>Dim screen</b> on the phone to keep it awake without the bright display.</p>
+    </details>
+    <details><summary>Red banner: “Can’t see the whole Slinger”</summary>
+      <p>The phone moved or is too close. Re-centre it so the whole dark well is visible with a margin around it.</p>
+    </details>
+    <details><summary>Cards aren’t being recognised</summary>
+      <ul>
+        <li>Make sure the card sits flat and fully inside the well.</li>
+        <li>Too dark or too bright? Change the lights, empty the slinger and press <b>Relock</b> on the phone.</li>
+        <li>Brand-new set? Press <b>Check for new sets</b> on Home.</li>
+      </ul>
+    </details>
+    <details><summary>Where is my collection stored? How do I back it up?</summary>
+      <p>Everything is in the file <code>collection.db</code> in the <b>TCG Catalog</b> folder inside your Documents (Home shows the exact place, with an <b>Open folder</b> button). <b>Finish batch</b> makes a backup copy automatically, and <b>Back up now</b> on Home makes one any time. To move to a new computer, install the app there and copy the whole folder across.</p>
+    </details>
+  </div>
+</main>
+<script src="shared.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TCG Catalog</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  .hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin: 10px 0 22px; }
+  .hero h1 { margin: 6px 0 4px; font-size: clamp(1.9rem, 3.4vw, 2.7rem); letter-spacing: -0.035em; line-height: 1.05; font-weight: 800; }
+  .hero h1 .grad { background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero .sub { color: var(--text-2); font-size: 1.02rem; }
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px 16px; min-width: 112px; }
+  .stat b { display: block; font-size: 1.45rem; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 0.72rem; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; }
+
+  /* first-run setup */
+  #setup { display: none; margin-bottom: 18px; border-color: rgba(139,124,255,0.4);
+    background: linear-gradient(135deg, rgba(139,124,255,0.14), rgba(56,217,245,0.06)), var(--surface); }
+  #setup.show { display: block; }
+  #setup h2 { margin: 0 0 4px; font-size: 1.2rem; letter-spacing: -0.01em; }
+  #setup p { margin: 0 0 14px; color: var(--text-2); }
+  #setupProg { display: none; margin-top: 14px; }
+  #setupProg.show { display: block; }
+  #setupProg .progress { margin: 8px 0 6px; height: 10px; }
+  #setupMsg { font-size: 0.82rem; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .tiles { display: grid; grid-template-columns: 1.35fr 1fr 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 560px) { .tiles { grid-template-columns: 1fr; } }
+  a.tile { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 20px; border-radius: var(--r-lg); color: var(--text); text-decoration: none;
+    background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); overflow: hidden; transition: transform .15s, border-color .15s; }
+  a.tile:hover { transform: translateY(-3px); border-color: var(--line-2); text-decoration: none; }
+  a.tile .ic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: rgba(255,255,255,0.05); border: 1px solid var(--line); color: var(--accent-2); }
+  a.tile .ic svg { width: 21px; height: 21px; }
+  a.tile b { font-size: 1.1rem; letter-spacing: -0.01em; }
+  a.tile span { color: var(--text-2); font-size: 0.9rem; line-height: 1.45; }
+  a.tile.feature { background: linear-gradient(140deg, rgba(139,124,255,0.22), rgba(56,217,245,0.08) 60%), var(--surface); border-color: rgba(139,124,255,0.4); }
+  a.tile.feature .ic { background: var(--accent-grad); color: #0b0d14; border: 0; }
+  a.tile.feature::after { content: "Recommended"; position: absolute; top: 18px; right: 18px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #cfc8ff; }
+
+  .two { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (max-width: 960px) { .two { grid-template-columns: 1fr; } }
+  .prow { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 0; border-top: 1px solid var(--line); }
+  .prow:first-of-type { border-top: 0; padding-top: 4px; }
+  .prow .pl { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .prow .pv { color: var(--text-2); font-size: 0.9rem; min-width: 0; }
+  .prow .pb .btn { min-width: 150px; }
+  @media (max-width: 640px) { .prow { grid-template-columns: 1fr; gap: 8px; } }
+  #phoneBox { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 18px; align-items: center; }
+  @media (max-width: 420px) { #phoneBox { grid-template-columns: 1fr; } }
+  #qr { width: 150px; height: 150px; border-radius: 14px; background: #fff; padding: 8px; display: grid; place-items: center; }
+  #qr img { width: 100%; height: 100%; display: block; }
+  #phoneUrl { font-family: var(--mono); font-size: 0.92rem; color: var(--text); word-break: break-all; }
+  ol.steps { margin: 10px 0 0; padding-left: 20px; color: var(--text-2); font-size: 0.9rem; }
+  ol.steps li { margin: 4px 0; }
+  #logs pre { margin: 6px 0 12px; white-space: pre-wrap; background: rgba(0,0,0,0.35); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; color: var(--text-2); max-height: 170px; overflow: auto; font: 0.76rem/1.5 var(--mono); }
+  footer { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; margin-top: 26px; font-size: 0.86rem; }
+  footer a { color: var(--text-3); } footer a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="hero">
+    <div>
+      <div class="eyebrow">Trading card catalog</div>
+      <h1>Scan it. Sort it. <span class="grad">Own it.</span></h1>
+      <div class="sub">Point your phone at the card slinger and let the app do the bookkeeping.</div>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="panel" id="setup">
+    <h2>Welcome! One step before your first scan</h2>
+    <p>The scanner needs the card list and the “fingerprints” it uses to recognise cards. They come with the app — installing them takes a few seconds.</p>
+    <div class="actions">
+      <button class="btn btn-primary btn-lg" id="seedBtn"><i data-icon="download"></i>Install card data</button>
+      <button class="btn" id="updBtn" title="Downloads the newest card list from the internet and fingerprints any new sets"><i data-icon="refresh"></i>Download newest sets instead</button>
+    </div>
+    <div id="setupProg"><div class="faint" id="setupPhase"></div><div class="progress"><i id="setupBar"></i></div><div id="setupMsg"></div></div>
+  </section>
+
+  <section class="tiles">
+    <a class="tile feature" href="scan_sort.html"><div class="ic"><i data-icon="zap"></i></div><b>Scan &amp; Sort</b><span>Camera and the card to file on one screen. Ping on every card, beeps for duplicates.</span></a>
+    <a class="tile" href="live_viewer.html"><div class="ic"><i data-icon="camera"></i></div><b>Scanner</b><span>What the camera sees, the last card added and the whole batch.</span></a>
+    <a class="tile" href="sort_viewer.html"><div class="ic"><i data-icon="layers"></i></div><b>Sorter</b><span>Walk the stack card by card with the set to file each one in.</span></a>
+    <a class="tile" href="view_collection.html"><div class="ic"><i data-icon="grid"></i></div><b>Collection</b><span>Browse and search everything you own, set by set.</span></a>
+  </section>
+
+  <div class="two">
+    <section class="panel">
+      <div class="panel-head"><h2>Session</h2><span><button class="btn btn-sm btn-ghost" id="pStop"><i data-icon="stop"></i>Stop everything</button> <button class="btn btn-sm btn-ghost" id="pQuit" title="Stop the camera, the scanner and the app itself"><i data-icon="power"></i>Quit app</button></span></div>
+      <div class="prow"><span class="pl"><i class="dot" id="dCam"></i>Camera server</span><span class="pv" id="pCam"></span><span class="pb"><button class="btn" id="pCamBtn"></button></span></div>
+      <div class="prow"><span class="pl"><i class="dot" id="dScan"></i>Scanner</span><span class="pv" id="pScan"></span><span class="pb"><button class="btn" id="pScanBtn"></button></span></div>
+      <div class="prow"><span class="pl"><i class="dot" id="dBatch"></i>This batch</span><span class="pv" id="pBatch"></span><span class="pb"><button class="btn" id="pFin"><i data-icon="check"></i>Finish batch</button></span></div>
+      <div class="prow"><span class="pl"><i class="dot on"></i>Collection</span><span class="pv" id="pColl"></span><span class="pb"><button class="btn" id="pBackup"><i data-icon="db"></i>Back up now</button></span></div>
+      <div class="prow"><span class="pl"><i class="dot on"></i>Saved in</span><span class="pv faint" id="pDir" style="overflow-wrap:anywhere"></span><span class="pb"><button class="btn" id="pOpen"><i data-icon="folder"></i>Open folder</button></span></div>
+      <div class="prow"><span class="pl"><i class="dot" id="dData"></i>Card data</span><span class="pv" id="pData"></span><span class="pb"><button class="btn" id="pUpdate"><i data-icon="refresh"></i>Check for new sets</button></span></div>
+      <details id="logs" class="plain" style="margin-top:12px"><summary>Logs (for troubleshooting)</summary><div class="eyebrow" style="margin-top:10px">Scanner</div><pre id="logScan"></pre><div class="eyebrow">Camera server</div><pre id="logCam"></pre></details>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Connect your phone</h2><span class="pill" id="phoneTag"><i class="dot off"></i>not connected</span></div>
+      <div id="phoneBox">
+        <div id="qr"><span class="faint">QR</span></div>
+        <div>
+          <div class="faint" style="font-size:0.8rem">Scan the code with the phone’s camera, or type:</div>
+          <div id="phoneUrl">…</div>
+          <button class="btn btn-sm" id="pCopy" style="margin-top:8px"><i data-icon="copy"></i>Copy address</button>
+        </div>
+      </div>
+      <ol class="steps">
+        <li>Phone and computer on the <b>same Wi-Fi</b>.</li>
+        <li>Open the address — accept the “not private” warning once (it’s your own computer).</li>
+        <li>Tap <b>Start camera</b> with the slinger empty, then start the scanner.</li>
+      </ol>
+    </section>
+  </div>
+
+  <footer>
+    <a href="help.html">How to use the app</a>
+    <a href="import_csv.html">Import a Delver CSV</a>
+  </footer>
+</main>
+<script src="shared.js"></script>
+<script src="app.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let S = null, qrLoaded = false;
+
+function paint(s) {
+  S = s;
+  const live = s.camera && s.phone_streaming;
+  $("dCam").className = "dot " + (s.camera ? "on" : "off");
+  $("pCam").textContent = s.camera ? "Running — the phone can connect" : "Stopped";
+  $("pCamBtn").innerHTML = icon(s.camera ? "stop" : "play") + (s.camera ? "Stop" : "Start");
+  $("pCamBtn").className = "btn " + (s.camera ? "btn-danger" : "btn-good");
+  $("dScan").className = "dot " + (s.scanner ? (live ? "on" : "wait") : "off");
+  $("pScan").textContent = !s.scanner ? "Stopped" : live ? "Running — put a card in the slinger" : "Running — waiting for the phone camera";
+  $("pScanBtn").innerHTML = icon(s.scanner ? "stop" : "play") + (s.scanner ? "Stop scanner" : "Start scanner");
+  $("pScanBtn").className = "btn " + (s.scanner ? "btn-danger" : "btn-primary");
+  $("dBatch").className = "dot " + (s.live_scans ? "wait" : "off");
+  $("pBatch").textContent = s.live_scans ? s.live_scans + " scans waiting — sort them, then finish the batch" : "Empty — ready to scan";
+  $("pFin").disabled = !s.live_scans;
+  $("pDir").textContent = s.data_dir || "";
+  $("pColl").textContent = s.copies.toLocaleString() + " copies saved across " + s.batches + " batch" + (s.batches === 1 ? "" : "es");
+  const st = s.setup || {};
+  $("dData").className = "dot " + (st.ready ? "on" : "wait");
+  $("pData").textContent = st.running ? (st.phase || "Working…") : st.ready ? st.catalog_cards.toLocaleString() + " cards, " + st.hashed_cards.toLocaleString() + " recognisable" : "Not installed yet";
+  $("pUpdate").disabled = !!st.running;
+  $("phoneUrl").textContent = s.phone_url;
+  $("phoneTag").innerHTML = '<i class="dot ' + (live ? "on" : s.camera ? "wait" : "off") + '"></i>' + (live ? "phone connected" : s.camera ? "waiting for phone" : "camera server off");
+  if (!qrLoaded) { qrLoaded = true; $("qr").innerHTML = '<img src="/api/phone-qr.svg" alt="QR code for the phone page" onerror="this.parentNode.innerHTML=\'<span class=faint>QR unavailable</span>\'">'; }
+  // first-run setup card
+  $("setup").classList.toggle("show", !st.ready || !!st.running);
+  $("seedBtn").style.display = st.seed_available ? "" : "none";
+  $("seedBtn").disabled = $("updBtn").disabled = !!st.running;
+  $("setupProg").classList.toggle("show", !!st.running || st.ok === false);
+  $("setupPhase").textContent = st.error ? "Setup failed: " + st.error : st.phase || "";
+  $("setupBar").style.width = st.total ? (100 * st.done / st.total) + "%" : st.running ? "8%" : "0%";
+  $("setupMsg").textContent = st.message || "";
+}
+document.addEventListener("appstatus", e => paint(e.detail));
+
+async function stats() {
+  try {
+    const sets = await (await fetch("/owned-sets")).json();
+    const d = sets.reduce((n, s) => n + s.distinct, 0), c = sets.reduce((n, s) => n + s.current + s.earlier, 0);
+    $("stats").innerHTML = [[sets.length, "sets"], [d.toLocaleString(), "cards"], [c.toLocaleString(), "copies"]]
+      .map(([v, l]) => '<div class="stat"><b>' + v + "</b><span>" + l + "</span></div>").join("");
+  } catch (e) {}
+}
+async function run(btn, path, body, msg) {
+  btn.disabled = true;
+  try { const r = await AppCtl.api(path, body); AppCtl.say(r.ok === false ? (r.error || r.message) : (msg || r.message || "Done."), 7000); }
+  catch (e) { AppCtl.say(String(e.message || e)); }
+  btn.disabled = false; AppCtl.refresh(); stats();
+}
+$("pCamBtn").onclick = () => run($("pCamBtn"), "/api/camera", { action: S && S.camera ? "stop" : "start" });
+$("pScanBtn").onclick = () => run($("pScanBtn"), "/api/scanner", { action: S && S.scanner ? "stop" : "start" },
+  S && !S.scanner ? "Scanner starting. Now open the phone page and tap Start camera." : "Scanner stopped.");
+$("pBackup").onclick = () => run($("pBackup"), "/api/backup", {});
+$("pOpen").onclick = () => run($("pOpen"), "/api/open-folder", {}, "Opened the folder with your collection and backups.");
+$("pQuit").onclick = async () => {
+  try { await AppCtl.api("/api/quit", {}); } catch (e) {}
+  document.body.innerHTML = '<main class="page"><div class="empty-state" style="margin-top:18vh"><b>TCG Catalog is closed</b>You can close this tab. Open the app again from its shortcut.</div></main>';
+};
+$("pStop").onclick = () => run($("pStop"), "/api/stop-all", {}, "Camera server and scanner stopped.");
+$("pUpdate").onclick = () => run($("pUpdate"), "/api/setup", { kind: "update" }, "Checking for new sets — progress shows at the top of this page.");
+$("seedBtn").onclick = () => run($("seedBtn"), "/api/setup", { kind: "seed" }, "Installing card data…");
+$("updBtn").onclick = () => run($("updBtn"), "/api/setup", { kind: "update" }, "Downloading the newest card list — this can take a while.");
+$("pCopy").onclick = async () => { try { await navigator.clipboard.writeText(S.phone_url); AppCtl.say("Copied " + S.phone_url); } catch (e) { AppCtl.say(S ? S.phone_url : ""); } };
+let finArmed = false, finTimer = null;
+$("pFin").onclick = () => {
+  const b = $("pFin");
+  if (!finArmed) { finArmed = true; b.classList.add("armed"); b.textContent = "Click again to save"; finTimer = setTimeout(() => { finArmed = false; b.classList.remove("armed"); b.innerHTML = icon("check") + "Finish batch"; }, 4000); return; }
+  clearTimeout(finTimer); finArmed = false; b.classList.remove("armed"); b.innerHTML = icon("check") + "Finish batch";
+  run(b, "/api/finish-batch", {});
+};
+async function loadLogs() {
+  if (!$("logs").open) return;
+  for (const [id, name] of [["logScan", "scanner"], ["logCam", "camera"]]) {
+    try { $(id).textContent = (await (await fetch("/api/log?name=" + name)).json()).lines.join("\n") || "(empty)"; } catch (e) {}
+  }
+}
+setInterval(loadLogs, 2500); $("logs").addEventListener("toggle", loadLogs);
+setInterval(stats, 10000); stats();
+</script>
+</body>
+</html>

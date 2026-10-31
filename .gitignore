@@ -1,0 +1,39 @@
+# environment / caches
+venv/
+__pycache__/
+image_cache/
+
+# the collection and every backup of it (personal data, large, changes constantly)
+collection.db*
+*.db
+*.db-journal
+
+# private keys / certs for the phone camera server (regenerated on first run)
+phone_cam.pem
+phone_cam.key
+
+# runtime state, logs, generated output
+*.log
+live_frame.jpg
+live_status.json
+live_last_committed.json
+viewer_data.json
+out/
+uploads/
+
+# personal exports and artwork
+delverx-exported*.csv
+*.csv
+
+# editor/backup copies of scripts
+*.bak
+*.bak[0-9]
+.sort_viewer_port
+live_cam.jpg
+phone_cam.ip
+background.jpg
+dist/
+
+# local list of personal strings that must never be published (tools/publish_public.sh)
+.publish_blocklist
+build/

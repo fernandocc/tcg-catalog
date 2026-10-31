@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sorter · TCG Catalog</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  #layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 470px); gap: 18px; align-items: start; }
+  #report { position: sticky; top: calc(var(--bar-h) + 16px); max-height: calc(100vh - var(--bar-h) - 32px); overflow-y: auto; }
+  #layout.no-report { grid-template-columns: 1fr; }
+  #layout.no-report #report { display: none; }
+  @media (max-width: 1050px) { #layout { grid-template-columns: 1fr; } #report { position: static; max-height: none; } }
+
+  #stage { padding: 22px; min-height: 60vh; }
+  .topline { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .topline .progress { flex: 1; }
+  #counter { font-variant-numeric: tabular-nums; }
+  .banners { display: grid; gap: 8px; margin-bottom: 14px; }
+  .banners:empty { display: none; }
+  .cardrow { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 28px; align-items: center; }
+  @media (max-width: 760px) { .cardrow { grid-template-columns: 1fr; text-align: center; } .cardrow .info { align-items: center; } }
+  #imgwrap img { width: min(100%, 380px); max-height: 62vh; object-fit: contain; }
+  .info { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; }
+  #name { font-size: 2rem; font-weight: 750; letter-spacing: -0.025em; line-height: 1.1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  #name .num { color: var(--text-3); font-weight: 500; font-size: 0.6em; }
+  #meta { color: var(--text-2); }
+  .label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); margin-bottom: -6px; }
+  #variantRow button { height: 34px; }
+  .navrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .navrow .keys { color: var(--text-3); font-size: 0.82rem; }
+  #variantErr, #deleteErr { color: var(--bad); font-size: 0.85rem; min-height: 1.1em; }
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Sorter</div>
+      <h1>Sort the stack</h1>
+      <div class="sub">Walk the physical stack in scan order and drop each card in the set shown.</div>
+    </div>
+    <div class="actions">
+      <div class="seg" id="modeSeg">
+        <button data-mode="all" class="active">All<span class="count" id="cAll"></span></button>
+        <button data-mode="new">New<span class="count" id="cNew"></span></button>
+        <button data-mode="dups">Duplicates<span class="count" id="cDup"></span></button>
+      </div>
+      <button class="btn" id="repBtn" title="Show or hide the batch report"><i data-icon="report"></i>Report</button>
+    </div>
+  </div>
+
+  <div id="layout">
+    <section id="stage" class="panel">
+      <div id="content">
+        <div class="topline"><span class="pill" id="counter"></span><div class="progress"><i id="prog"></i></div></div>
+        <div class="banners"><div id="runBanner" class="banner"></div><div id="dupBanner" class="banner dup"></div></div>
+        <div class="cardrow">
+          <div id="imgwrap" class="cardimg"></div>
+          <div class="info">
+            <div id="name"></div>
+            <div id="meta"></div>
+            <div class="label">Put it in</div>
+            <div id="setbox" class="setbadge"></div>
+            <div id="finCur" class="fin"></div>
+            <div class="label">Finish</div>
+            <div class="seg" id="variantRow">
+              <button data-variant="regular">Regular</button>
+              <button data-variant="holofoil">Holofoil</button>
+              <button data-variant="reverse holofoil">Reverse holo</button>
+            </div>
+            <div id="variantErr"></div>
+            <button class="btn btn-danger btn-sm" id="deleteBtn"><i data-icon="trash"></i>Wrong card — delete</button>
+            <div id="deleteErr"></div>
+          </div>
+        </div>
+        <div class="navrow">
+          <button class="btn" id="prevBtn"><i data-icon="left"></i>Back</button>
+          <span class="keys"><kbd>Space</kbd> next &nbsp;·&nbsp; <kbd>←</kbd> / <kbd>Backspace</kbd> back</span>
+          <button class="btn btn-primary" id="nextBtn">Next card<i data-icon="right"></i></button>
+        </div>
+      </div>
+      <div id="doneMsg" style="display:none"></div>
+    </section>
+    <aside id="report" class="panel report"></aside>
+  </div>
+</main>
+<script src="shared.js"></script>
+<script>
+let allCards = [], cards = [], i = 0;
+let mode = "all";            // "all" | "new" | "dups"
+let reportOpen = true;
+const $ = id => document.getElementById(id);
+
+function applyMode() {
+  cards = allCards.filter(c => mode === "all" || (mode === "dups" ? c.duplicate : !c.duplicate));
+  $("cAll").textContent = allCards.length;
+  $("cNew").textContent = allCards.filter(c => !c.duplicate).length;
+  $("cDup").textContent = allCards.filter(c => c.duplicate).length;
+  document.querySelectorAll("#modeSeg button").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  renderReport();
+  if (i >= cards.length) i = Math.max(0, cards.length - 1);
+}
+function setMode(m) { mode = m; i = 0; applyMode(); resetDeleteBtn(); render(); }
+document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
+
+function renderReport() {
+  const el = $("report");
+  $("layout").classList.toggle("no-report", !reportOpen || !allCards.length);
+  $("repBtn").classList.toggle("on", reportOpen);
+  keepScroll(el, () => { el.innerHTML = '<div class="panel-head"><h2>Batch report</h2></div>' + batchReport(allCards).html; });
+  markCurrentRow(allCards.indexOf(cards[i]) + 1);
+}
+$("repBtn").onclick = () => { reportOpen = !reportOpen; renderReport(); };
+// jump to a card by its scan position (1-based) from the report links
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a.rj");
+  if (!a) return;
+  e.preventDefault();
+  mode = "all"; applyMode();
+  i = +a.dataset.pos - 1;
+  render();
+});
+
+function renderRunBanner() {
+  const rb = $("runBanner");
+  rb.className = "banner"; rb.innerHTML = "";
+  if (mode !== "all") return;                 // runs only make sense in full scan order
+  const r = dupRun(cards, i);
+  if (r && r.len >= DUP_RUN_MIN) {
+    rb.className = "banner warn show";
+    rb.innerHTML = icon("layers") + "<span>Run of " + r.len + " duplicates (#" + (r.start + 1) + "–#" + (r.end + 1) + ") — card " + (i - r.start + 1) + " of " + r.len +
+      ". Dump the whole group in the dupes bucket.</span>" + (i < r.end ? '<button class="btn btn-sm" id="skipRun">' + icon("skip") + "Skip the run</button>" : "");
+    const b = $("skipRun");
+    if (b) b.onclick = () => { i = r.end + 1; render(); };
+    return;
+  }
+  const nx = dupRun(cards, i + 1);          // heads-up: a run starts right after this card
+  if (nx && nx.start === i + 1 && nx.len >= DUP_RUN_MIN) {
+    rb.className = "banner info show";
+    rb.innerHTML = icon("layers") + "<span>Heads up: the next " + nx.len + " cards (#" + (nx.start + 1) + "–#" + (nx.end + 1) + ") are all duplicates — straight into the dupes bucket.</span>";
+  }
+}
+
+function render() {
+  const content = $("content"), doneMsg = $("doneMsg");
+  if (cards.length === 0 || i >= cards.length) {
+    content.style.display = "none";
+    doneMsg.style.display = "block";
+    const title = !allCards.length ? "Nothing to sort yet" : mode === "dups" ? "No duplicates left" : mode === "new" ? "No new cards left" : "All " + allCards.length + " cards sorted";
+    const sub = !allCards.length ? "Scan a batch first — cards appear here as they're added." : "When the stack is filed, press <b>Finish batch</b> in the top bar to save it to your collection.";
+    doneMsg.innerHTML = '<div class="empty-state">' + icon(allCards.length ? "check" : "layers") + "<b>" + title + "</b>" + sub + "</div>";
+    return;
+  }
+  content.style.display = "block";
+  doneMsg.style.display = "none";
+  const c = cards[i];
+  markCurrentRow(allCards.indexOf(c) + 1);
+  $("counter").textContent = (mode === "dups" ? "Duplicate " : mode === "new" ? "New card " : "Card ") + (i + 1) + " of " + cards.length;
+  $("prog").style.width = (100 * (i + 1) / cards.length) + "%";
+  const db = $("dupBanner");
+  db.classList.toggle("show", !!c.duplicate);
+  db.innerHTML = icon("alert") + "<span>" + (c.check_foil
+    ? "Duplicate (qty " + c.qty + ", no finish marked) — check by eye, it may be a normal + foil pair"
+    : c.in_prior_batch ? "Duplicate — already in an earlier batch. Put it in the dupes pile."
+    : "Duplicate — you already scanned one in this batch. Put it in the dupes pile.") + "</span>";
+  renderRunBanner();
+  const iw = $("imgwrap");
+  iw.className = "cardimg " + (c.duplicate ? "dup" : "new");
+  iw.innerHTML = c.image ? '<img src="' + esc(c.image) + '" alt="' + esc(c.name) + '">' : '<div class="noimg">No image available</div>';
+  $("name").innerHTML = esc(c.name) + (c.number ? ' <span class="num">#' + esc(c.number) + "</span>" : "");
+  $("meta").textContent = "Scan #" + (allCards.indexOf(c) + 1) + " · " + (c.qty > 1 ? "qty " + c.qty : "1 copy");
+  const sb = $("setbox");
+  sb.textContent = c.needs_review ? "Needs review" + (c.reason ? " — " + c.reason : "") : c.set;
+  sb.className = "setbadge" + (c.needs_review ? " review" : "");
+  showFinishes($("finCur"), c.card_id, true);
+  $("variantErr").textContent = "";
+  document.querySelectorAll("#variantRow button").forEach(btn => btn.classList.toggle("active", normVariantLabel(btn.dataset.variant) === c.norm_variant));
+}
+function normVariantLabel(label) {   // mirrors ingest_delver.norm_variant() for these 3 labels
+  if (label === "reverse holofoil") return "reverse";
+  if (label === "holofoil") return "holo";
+  return "normal";
+}
+
+document.querySelectorAll("#variantRow button").forEach(btn => btn.addEventListener("click", async () => {
+  try {
+    const data = await (await fetch("/set-variant", { method: "POST", body: JSON.stringify({ id: cards[i].id, variant: btn.dataset.variant }) })).json();
+    if (!data.ok) { $("variantErr").textContent = data.error; return; }
+    allCards = await (await fetch("viewer_data.json?t=" + Date.now())).json();
+    applyMode(); render();
+  } catch (e) { $("variantErr").textContent = String(e); }
+}));
+
+function next() { if (i < cards.length) { i++; resetDeleteBtn(); render(); } }
+function prev() { if (i > 0) { i--; resetDeleteBtn(); render(); } }
+document.addEventListener("keydown", (e) => {
+  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+  if (e.code === "Space" || e.code === "ArrowRight") { e.preventDefault(); next(); }
+  else if (e.code === "Backspace" || e.code === "ArrowLeft") { e.preventDefault(); prev(); }
+});
+$("nextBtn").onclick = next;
+$("prevBtn").onclick = prev;
+
+let deleteArmed = false, deleteTimer = null;
+function resetDeleteBtn() {
+  deleteArmed = false; clearTimeout(deleteTimer);
+  const btn = $("deleteBtn");
+  btn.innerHTML = icon("trash") + "Wrong card — delete"; btn.classList.remove("armed"); btn.disabled = false;
+  $("deleteErr").textContent = "";
+}
+$("deleteBtn").onclick = async () => {
+  const btn = $("deleteBtn");
+  if (!deleteArmed) { deleteArmed = true; btn.textContent = "Click again to delete"; btn.classList.add("armed"); deleteTimer = setTimeout(resetDeleteBtn, 3000); return; }
+  clearTimeout(deleteTimer); btn.disabled = true; btn.textContent = "Deleting…";
+  try {
+    const data = await (await fetch("/delete-card", { method: "POST", body: JSON.stringify({ id: cards[i].id }) })).json();
+    if (!data.ok) { $("deleteErr").textContent = data.error; resetDeleteBtn(); return; }
+    allCards = allCards.filter(c => c.id !== cards[i].id);
+    applyMode(); resetDeleteBtn(); render();
+  } catch (e) { $("deleteErr").textContent = String(e); resetDeleteBtn(); }
+};
+
+fetch("viewer_data.json?t=" + Date.now())
+  .then(r => r.json())
+  .then(data => { allCards = data; applyMode(); render(); })
+  .catch(err => { $("stage").textContent = "Couldn't load the scans: " + err; });
+</script>
+<script src="app.js"></script>
+</body>
+</html>

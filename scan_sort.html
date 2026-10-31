@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scan &amp; Sort · TCG Catalog</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  #grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 18px; align-items: start; }
+  @media (max-width: 980px) { #grid { grid-template-columns: 1fr; } }
+  #camPanel { position: sticky; top: calc(var(--bar-h) + 16px); }
+  @media (max-width: 980px) { #camPanel { position: static; } }
+  #seeingRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  #framing { margin-top: 12px; }
+  #streak { margin-bottom: 14px; }
+  #report { margin-bottom: 18px; }
+  #report.hide { display: none; }
+
+  #empty { padding: 60px 20px; }
+  .now { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 24px; align-items: center; }
+  @media (max-width: 640px) { .now { grid-template-columns: 1fr; text-align: center; } .now .info { align-items: center; } }
+  #imgwrap img { width: min(100%, 320px); max-height: 50vh; object-fit: contain; }
+  .info { display: flex; flex-direction: column; align-items: flex-start; gap: 11px; min-width: 0; }
+  #name { font-size: 1.65rem; font-weight: 750; letter-spacing: -0.02em; line-height: 1.12; }
+  #name .num { color: var(--text-3); font-weight: 500; font-size: 0.6em; }
+  #meta { color: var(--text-2); font-size: 0.9rem; }
+  #setbox { font-size: 1.55rem; }
+  .label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); margin-bottom: -5px; }
+  #dupBanner { margin-bottom: 14px; }
+  .nav { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+  #err { color: var(--bad); font-size: 0.85rem; min-height: 1.1em; }
+
+  #histPanel { margin-top: 18px; }
+  #recent { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; scroll-snap-type: x proximity; }
+  #recent .h { flex: none; width: 96px; cursor: pointer; scroll-snap-align: start; position: relative; }
+  #recent .h img { width: 96px; display: block; border-radius: 6px; border: 2px solid var(--good-line); transition: transform .12s; }
+  #recent .h.dup img { border-color: var(--warn-line); opacity: 0.8; }
+  #recent .h.cur img { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139,124,255,0.35); }
+  #recent .h:hover img { transform: translateY(-3px); }
+  #recent .h span { position: absolute; top: 5px; left: 5px; font-size: 0.68rem; font-weight: 700; padding: 0 6px; border-radius: 6px; background: rgba(7,9,15,0.8); }
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Scan &amp; Sort</div>
+      <h1>Scan and file as you go</h1>
+      <div class="sub">Feed a card, wait for the ping, drop it in the set shown.</div>
+    </div>
+    <div class="actions">
+      <span class="hint" id="sndNote"></span>
+      <button class="btn" id="snd" title="Also ping on this computer (the phone already pings)"></button>
+      <button class="btn" id="repBtn"><i data-icon="report"></i>Report</button>
+    </div>
+  </div>
+
+  <div id="report" class="panel report hide"></div>
+  <div id="streak" class="banner warn"></div>
+
+  <div id="grid">
+    <section class="panel" id="camPanel">
+      <div class="panel-head"><h2>Camera</h2><span class="pill" id="liveTag"><i class="dot off"></i>offline</span></div>
+      <div id="frameWrap" class="camframe stale">
+        <img id="frame" src="live_cam.jpg" alt="">
+        <div class="nofeed"><b>No live picture</b><span id="noFeedMsg">Start the scanner in the top bar, then tap <b>Start camera</b> on the phone.</span></div>
+      </div>
+      <div id="framing" class="banner bad"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg><span>Can’t see the whole Slinger — the phone may have moved or zoomed. Re-centre it so the full card is in view.</span></div>
+      <div id="seeingRow"><span class="pill" id="seeing">…</span><div id="finSeen" class="fin"></div></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Sort this card</h2><span class="pill" id="counter"></span></div>
+      <div id="empty" class="empty-state"><i data-icon="camera"></i><b>Waiting for the first card</b>Cards appear here the moment they’re recognised.</div>
+      <div id="content" style="display:none">
+        <div id="dupBanner" class="banner dup"></div>
+        <div class="now">
+          <div id="imgwrap" class="cardimg"></div>
+          <div class="info">
+            <div id="name"></div>
+            <div id="meta"></div>
+            <div class="label">Put it in</div>
+            <div id="setbox" class="setbadge"></div>
+            <div id="finCur" class="fin"></div>
+            <div class="label">Finish</div>
+            <div class="seg" id="variantRow">
+              <button data-variant="regular">Regular</button>
+              <button data-variant="holofoil">Holofoil</button>
+              <button data-variant="reverse holofoil">Reverse holo</button>
+            </div>
+            <div class="nav">
+              <button class="btn btn-sm" id="prev"><i data-icon="left"></i>Back</button>
+              <button class="btn btn-sm" id="newest">Newest<i data-icon="skip"></i></button>
+              <button class="btn btn-sm btn-danger" id="deleteBtn"></button>
+            </div>
+            <div id="err"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel" id="histPanel">
+    <div class="panel-head"><h2>This batch, newest first</h2><span class="faint" id="histCount"></span></div>
+    <div id="recent"></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+let camLive = false;   // scanner running and the phone sending pictures (from the top bar status)
+let cards = [], i = 0, lastAt = null, deleteArmed = false, deleteTimer = null;
+const $ = id => document.getElementById(id);
+
+/* ---------- report ---------- */
+let reportOpen = false;
+function renderReport() {
+  const el = $("report");
+  el.classList.toggle("hide", !reportOpen);
+  $("repBtn").classList.toggle("on", reportOpen);
+  if (reportOpen) {
+    keepScroll(el, () => { el.innerHTML = '<div class="panel-head"><h2>Batch report</h2></div>' + batchReport(cards).html; });
+    markCurrentRow(i + 1);
+  }
+}
+$("repBtn").onclick = () => { reportOpen = !reportOpen; renderReport(); };
+document.addEventListener("click", e => {
+  const a = e.target.closest("a.rj");
+  if (a) { e.preventDefault(); i = +a.dataset.pos - 1; render(); }
+});
+
+/* ---------- optional ping on this computer (the phone page pings by default) ---------- */
+let audio = null, soundOn = false;
+try { soundOn = localStorage.getItem("scansort_pc_sound") === "on"; } catch (e) {}
+function ensureAudio() {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === "suspended") audio.resume();
+  } catch (e) {}
+  $("sndNote").textContent = soundOn && !(audio && audio.state === "running") ? "Click anywhere once to enable sound" : "";
+}
+function tone(freq, start, dur, vol = 0.22) {
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.type = "sine"; o.frequency.value = freq;
+  g.gain.setValueAtTime(0, audio.currentTime + start);
+  g.gain.linearRampToValueAtTime(vol, audio.currentTime + start + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + start + dur);
+  o.connect(g); g.connect(audio.destination);
+  o.start(audio.currentTime + start); o.stop(audio.currentTime + start + dur + 0.02);
+}
+function ping(isDup) {
+  if (!soundOn || !audio || audio.state !== "running") return;
+  if (isDup) { tone(330, 0, 0.12); tone(330, 0.16, 0.12); } else { tone(880, 0, 0.1); tone(1320, 0.09, 0.18); }
+}
+function renderSoundBtn() { $("snd").innerHTML = icon(soundOn ? "sound" : "mute") + "Computer ping " + (soundOn ? "on" : "off"); $("snd").classList.toggle("on", soundOn); }
+$("snd").onclick = () => {
+  soundOn = !soundOn; ensureAudio(); renderSoundBtn();
+  try { localStorage.setItem("scansort_pc_sound", soundOn ? "on" : "off"); } catch (e) {}
+  if (soundOn) ping(false);
+};
+document.addEventListener("click", ensureAudio); document.addEventListener("keydown", ensureAudio);
+renderSoundBtn(); setTimeout(ensureAudio, 300);
+
+/* ---------- current card ---------- */
+function renderStreak() {
+  const r = cards.length ? dupRun(cards, cards.length - 1) : null, el = $("streak");
+  if (r && r.len >= DUP_RUN_MIN) {
+    el.classList.add("show");
+    el.innerHTML = icon("layers") + "<span>" + r.len + " duplicates in a row (scans #" + (r.start + 1) + "–#" + (r.end + 1) + ") — they can all go straight into the dupes bucket.</span>";
+  } else el.classList.remove("show");
+}
+function render() {
+  renderStreak();
+  const has = cards.length > 0;
+  $("empty").style.display = has ? "none" : "block";
+  $("content").style.display = has ? "block" : "none";
+  renderRecent();
+  renderReport();
+  $("counter").textContent = has ? "Card " + (Math.min(i, cards.length - 1) + 1) + " of " + cards.length : "No cards yet";
+  if (!has) return;
+  if (i >= cards.length) i = cards.length - 1;
+  if (i < 0) i = 0;
+  const c = cards[i];
+  if (i === cards.length - 1) $("counter").textContent += " · newest";
+  const b = $("dupBanner");
+  b.classList.toggle("show", !!c.duplicate);
+  b.innerHTML = icon("alert") + "<span>" + (c.check_foil ? "Duplicate (qty " + c.qty + ") — check by eye for a hidden foil"
+    : c.in_prior_batch ? "Duplicate — already in an earlier batch. Dupes pile."
+    : "Duplicate — already scanned in this batch. Dupes pile.") + "</span>";
+  $("imgwrap").className = "cardimg " + (c.duplicate ? "dup" : "new");
+  $("imgwrap").innerHTML = c.image ? '<img src="' + esc(c.image) + '" alt="">' : '<div class="noimg">No image</div>';
+  $("name").innerHTML = esc(c.name) + (c.number ? ' <span class="num">#' + esc(c.number) + "</span>" : "");
+  $("meta").textContent = c.duplicate ? "Duplicate copy" : "New to your collection";
+  const sb = $("setbox");
+  sb.textContent = c.needs_review ? "Needs review" + (c.reason ? " — " + c.reason : "") : c.set;
+  sb.className = "setbadge" + (c.needs_review ? " review" : "");
+  document.querySelectorAll("#variantRow button").forEach(btn => btn.classList.toggle("active", variantKey(btn.dataset.variant) === c.norm_variant));
+  showFinishes($("finCur"), c.card_id, true);
+  $("err").textContent = "";
+  resetDelete();
+}
+function variantKey(l) { return l === "reverse holofoil" ? "reverse" : l === "holofoil" ? "holo" : "normal"; }
+
+function renderRecent() {
+  const box = $("recent"), left = box.scrollLeft;
+  $("histCount").textContent = cards.length ? cards.length + " scanned · " + cards.filter(c => !c.duplicate).length + " new · " + cards.filter(c => c.duplicate).length + " duplicates" : "";
+  box.innerHTML = cards.map((c, idx) => ({ c, idx })).reverse().map(({ c, idx }) =>
+    '<div class="h' + (c.duplicate ? " dup" : "") + (idx === i ? " cur" : "") + '" data-i="' + idx + '" title="#' + (idx + 1) + " " + esc(c.name) + " — " + esc(c.set || "") + '">' +
+    '<img src="' + esc(c.image || "") + '" loading="lazy" alt=""><span>#' + (idx + 1) + "</span></div>").join("") ||
+    '<span class="faint">Scanned cards will line up here.</span>';
+  box.scrollLeft = left;
+}
+$("recent").addEventListener("click", e => { const h = e.target.closest(".h"); if (h) { i = +h.dataset.i; render(); } });
+$("prev").onclick = () => { if (i > 0) { i--; render(); } };
+$("newest").onclick = () => { i = cards.length - 1; render(); };
+document.addEventListener("keydown", e => {
+  if (e.target && e.target.tagName === "INPUT") return;
+  if (e.code === "ArrowLeft" || e.code === "Backspace") { e.preventDefault(); if (i > 0) { i--; render(); } }
+  else if (e.code === "ArrowRight" || e.code === "Space") { e.preventDefault(); if (i < cards.length - 1) { i++; render(); } }
+});
+document.querySelectorAll("#variantRow button").forEach(btn => btn.addEventListener("click", async () => {
+  try {
+    const d = await (await fetch("/set-variant", { method: "POST", body: JSON.stringify({ id: cards[i].id, variant: btn.dataset.variant }) })).json();
+    if (!d.ok) { $("err").textContent = d.error; return; }
+    await loadCards(); render();
+  } catch (e) { $("err").textContent = String(e); }
+}));
+function resetDelete() { deleteArmed = false; clearTimeout(deleteTimer); $("deleteBtn").innerHTML = icon("trash") + "Wrong card"; $("deleteBtn").classList.remove("armed"); }
+$("deleteBtn").onclick = async () => {
+  if (!deleteArmed) { deleteArmed = true; $("deleteBtn").textContent = "Click again to delete"; $("deleteBtn").classList.add("armed"); deleteTimer = setTimeout(resetDelete, 3000); return; }
+  clearTimeout(deleteTimer);
+  try {
+    const d = await (await fetch("/delete-card", { method: "POST", body: JSON.stringify({ id: cards[i].id }) })).json();
+    if (!d.ok) { $("err").textContent = d.error; resetDelete(); return; }
+    await loadCards(); render();
+  } catch (e) { $("err").textContent = String(e); resetDelete(); }
+};
+async function loadCards() { cards = await (await fetch("viewer_data.json?t=" + Date.now())).json(); }
+
+/* ---------- live camera + new-card detection ---------- */
+let lastFrameOk = 0;
+function refreshFrame() {
+  const im = new Image();
+  if (!camLive) return;                       // nothing new to show while the scanner/phone is off
+  im.onload = () => { $("frame").src = im.src; lastFrameOk = Date.now(); $("frameWrap").classList.remove("stale"); };
+  im.src = "live_cam.jpg?t=" + Date.now();
+}
+async function refreshStatus() {
+  let st;
+  try { st = await (await fetch("live_status.json?t=" + Date.now())).json(); }
+  catch (e) { $("seeing").textContent = "Scanner not running"; $("seeing").className = "pill"; return; }
+  $("seeing").innerHTML = st.seeing ? icon("check") + esc(st.seeing.name) + ' <span class="faint">' + esc(st.seeing.set) + "</span>" : "No card in view";
+  $("seeing").className = "pill" + (st.seeing ? " good" : "");
+  $("framing").classList.toggle("show", camLive && st.framing === "no_well");
+  showFinishes($("finSeen"), st.seeing && st.seeing.card_id);
+  const at = st.last_added ? st.last_added.at + "|" + st.last_added.card_id : "";
+  if (lastAt === null) { lastAt = at; return; }   // first poll after load = baseline: an old card must not ping
+  if (at && at !== lastAt) {
+    lastAt = at;
+    await loadCards();
+    i = cards.length - 1;                         // jump to the card that was just added
+    render();
+    if (cards.length) ping(!!cards[cards.length - 1].duplicate);
+  }
+}
+document.addEventListener("appstatus", e => {
+  const s = e.detail, live = s.scanner && s.phone_streaming;
+  camLive = live;
+  if (!live) $("frameWrap").classList.add("stale");
+  $("noFeedMsg").innerHTML = !s.scanner ? "Press <b>Start</b> next to <b>Scanner</b> in the top bar." : "Waiting for the phone — open the phone page and tap <b>Start camera</b>.";
+  $("liveTag").innerHTML = '<i class="dot ' + (live ? "on" : s.scanner ? "wait" : "off") + '"></i>' + (live ? "live" : s.scanner ? "waiting for phone" : "scanner off");
+});
+loadCards().then(() => { i = Math.max(0, cards.length - 1); render(); });
+setInterval(refreshFrame, 300);
+setInterval(refreshStatus, 400);
+setInterval(() => { if (Date.now() - lastFrameOk > 3000) $("frameWrap").classList.add("stale"); }, 1000);
+refreshFrame(); refreshStatus();
+</script>
+<script src="app.js"></script>
+</body>
+</html>

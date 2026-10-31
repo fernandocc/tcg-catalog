@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Import CSV · TCG Catalog</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="theme.css">
+<style>
+  #card { max-width: 560px; margin: 4vh auto 0; }
+  #card h1 { margin: 6px 0 4px; font-size: 1.6rem; letter-spacing: -0.02em; }
+  #card > p { color: var(--text-2); margin: 0 0 18px; }
+  #drop { display: flex; flex-direction: column; align-items: center; gap: 8px; border: 1.5px dashed var(--line-2); border-radius: var(--r-lg); padding: 2.6rem 1.5rem;
+    cursor: pointer; text-align: center; color: var(--text-2); transition: border-color .15s, background .15s; }
+  #drop:hover, #drop.drag { border-color: var(--accent); background: rgba(139,124,255,0.08); color: var(--text); }
+  #drop svg { width: 30px; height: 30px; color: var(--accent-2); }
+  input[type=file] { display: none; }
+  #status { margin-top: 1.2rem; min-height: 1.5em; }
+  #status.err { color: var(--bad); } #status.ok { color: var(--good); }
+  #files { margin-top: 1rem; font-size: 0.9rem; color: var(--text-2); }
+  #local { margin-top: 1.4rem; }
+  #local h2 { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); margin: 0 0 8px; }
+  #local button { display: flex; width: 100%; align-items: center; gap: 10px; text-align: left; font: inherit; color: var(--text); cursor: pointer;
+    background: rgba(0,0,0,0.22); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 14px; margin-bottom: 6px; }
+  #local button:hover { border-color: var(--line-2); background: rgba(255,255,255,0.04); }
+  #progress { margin-top: 1.4rem; display: none; }
+  #elapsed { color: var(--text-3); font-size: 0.85rem; margin-bottom: 8px; min-height: 1.1em; }
+  .step { margin-bottom: 8px; color: var(--text-3); } .step.active { color: var(--warn); } .step.done { color: var(--good); }
+  .step .mark { display: inline-block; width: 1.3em; }
+  #barWrap { background: rgba(255,255,255,0.07); border-radius: 999px; height: 10px; overflow: hidden; margin-bottom: 6px; }
+  #bar { background: var(--accent-grad); height: 100%; width: 0%; transition: width .2s ease; }
+  #barLabel { font-size: 0.85rem; color: var(--text-2); margin-bottom: 8px; min-height: 1.1em; }
+  #log { max-height: 190px; overflow-y: auto; font: 0.82rem/1.5 var(--mono); background: rgba(0,0,0,0.3); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 12px; }
+  .logline.ok { color: #cfe; } .logline.ok::before { content: "✓ "; color: var(--good); }
+  .logline.bad { color: #fcc; } .logline.bad::before { content: "✗ "; color: var(--bad); }
+  .logline .meta { color: var(--text-3); }
+</style>
+</head>
+<body>
+<main class="page"><div id="card" class="panel">
+  <div class="eyebrow">Import</div>
+  <h1>Import a Delver CSV</h1>
+  <p>Only needed if you scanned with the Poke Delver app. Pick one or more exported batches — sorting starts automatically.</p>
+  <label id="drop" for="file">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>
+    <span>Click to choose CSV file(s), or drag &amp; drop them here</span>
+    <input type="file" id="file" accept=".csv" multiple>
+  </label>
+  <div id="files"></div>
+  <div id="local"></div>
+  <div id="progress">
+    <div id="elapsed"></div>
+    <div id="stepSets" class="step"><span class="mark"></span>Sync sets</div>
+    <div id="barWrap"><div id="bar"></div></div>
+    <div id="barLabel"></div>
+    <div id="log"></div>
+  </div>
+  <div id="status"></div>
+</div></main>
+<script>
+const drop = document.getElementById("drop");
+const input = document.getElementById("file");
+const filesEl = document.getElementById("files");
+const localEl = document.getElementById("local");
+const status = document.getElementById("status");
+const progress = document.getElementById("progress");
+const elapsedEl = document.getElementById("elapsed");
+const stepSets = document.getElementById("stepSets");
+const bar = document.getElementById("bar");
+const barLabel = document.getElementById("barLabel");
+const log = document.getElementById("log");
+
+fetch("/list-csv").then(r => r.json()).then(names => {
+  if (!names.length) return;
+  localEl.innerHTML = "<h2>Already in this folder</h2>" +
+    names.map(n => '<button data-name="' + n + '">' + n + "</button>").join("");
+  localEl.querySelectorAll("button").forEach(btn =>
+    btn.addEventListener("click", () => ingestOne(() => fetch("/ingest-local", {
+      method: "POST",
+      body: JSON.stringify({ filename: btn.dataset.name }),
+    }))));
+});
+
+["dragenter", "dragover"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("drag"); }));
+["dragleave", "drop"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("drag"); }));
+drop.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
+input.addEventListener("change", () => handleFiles(input.files));
+
+function logLine(cls, text) {
+  const div = document.createElement("div");
+  div.className = "logline " + cls;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function resetProgress() {
+  progress.style.display = "block";
+  stepSets.className = "step";
+  stepSets.innerHTML = '<span class="mark"></span>Sync sets';
+  bar.style.width = "0%";
+  barLabel.textContent = "";
+  log.innerHTML = "";
+}
+
+function handleEvent(evt) {
+  if (evt.event === "sets_start") {
+    stepSets.className = "step active";
+    stepSets.innerHTML = '<span class="mark">…</span>Syncing sets';
+  } else if (evt.event === "sets_done") {
+    stepSets.className = "step done";
+    stepSets.innerHTML = '<span class="mark">✓</span>Synced ' + evt.count + ' sets';
+  } else if (evt.event === "card_start") {
+    bar.style.width = Math.round((evt.index - 1) / evt.total * 100) + "%";
+    barLabel.textContent = "Fetching " + evt.index + " / " + evt.total + ": " + evt.name;
+  } else if (evt.event === "card_done") {
+    bar.style.width = Math.round(evt.index / evt.total * 100) + "%";
+    barLabel.textContent = evt.index + " / " + evt.total + " processed";
+    if (evt.status === "ok") logLine("ok", evt.name + (evt.set ? " — " + evt.set : ""));
+    else logLine("bad", evt.name + " — NEEDS REVIEW (" + evt.reason + ")");
+  } else if (evt.event === "skip") {
+    logLine("bad", "Skipped: " + evt.reason);
+  }
+}
+
+async function streamIngest(fetchCall) {
+  const res = await fetchCall();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "", final = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const evt = JSON.parse(line);
+      if (evt.event === "finished") final = evt;
+      else handleEvent(evt);
+    }
+  }
+  return final;
+}
+
+async function ingestOne(fetchCall) {
+  status.className = "";
+  status.textContent = "";
+  resetProgress();
+  const start = Date.now();
+  const tick = () => {
+    const secs = Math.round((Date.now() - start) / 1000);
+    elapsedEl.textContent = secs + "s elapsed"
+      + (secs > 15 ? " — the card database can be slow, still working" : "");
+  };
+  tick();
+  const timer = setInterval(tick, 1000);
+  try {
+    const final = await streamIngest(fetchCall);
+    clearInterval(timer);
+    if (!final || !final.ok) {
+      status.className = "err"; status.textContent = (final && final.error) || "No result from server"; return;
+    }
+    status.className = "ok";
+    status.textContent = final.count + " cards ready. Opening sort viewer...";
+    setTimeout(() => { window.location.href = "/sort_viewer.html"; }, 700);
+  } catch (err) {
+    clearInterval(timer);
+    status.className = "err"; status.textContent = String(err);
+  }
+}
+
+async function handleFiles(fileList) {
+  const files = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith(".csv"));
+  if (!files.length) { status.textContent = "No CSV files selected."; status.className = "err"; return; }
+  filesEl.innerHTML = files.map(f => "&middot; " + f.name).join("<br>");
+  for (const file of files) {
+    await ingestOne(() => fetch("/upload", {
+      method: "POST",
+      headers: { "X-Filename": file.name },
+      body: file,
+    }));
+  }
+}
+</script>
+<script src="app.js"></script>
+</body>
+</html>
