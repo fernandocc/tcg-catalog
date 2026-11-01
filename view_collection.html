@@ -14,13 +14,26 @@
   @media (max-width: 760px) { .tools { grid-template-columns: 1fr; } }
   #toggles { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   @media (max-width: 760px) { #toggles { justify-content: flex-start; } }
-  #chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 12px; margin-bottom: 6px; }
-  .chip { flex: none; font: inherit; font-size: 0.86rem; font-weight: 550; height: 34px; padding: 0 14px; border-radius: 999px; cursor: pointer;
-    background: var(--surface); border: 1px solid var(--line-2); color: var(--text-2); transition: all .15s; }
+  /* set picker: wrapping grid, one button per set with a completion bar (red 0% -> green 99%, gold at 100%) */
+  #setbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 8px; }
+  #setbar .eyebrow { margin: 0; }
+  #setSort { width: auto; height: 32px; font-size: 0.84rem; }
+  #chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 8px; margin-bottom: 14px; }
+  @media (max-width: 520px) { #chips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  #chips .grp { grid-column: 1 / -1; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 6px 2px 0; }
+  .chip { --c: hsl(0 70% 55%); font: inherit; text-align: left; cursor: pointer; padding: 8px 11px 9px; border-radius: 12px;
+          background: var(--surface); border: 1px solid var(--line); color: var(--text-2); display: grid; gap: 5px; min-width: 0; }
   .chip:hover { color: var(--text); border-color: rgba(255,255,255,0.25); }
-  .chip.active { color: #fff; background: rgba(139,124,255,0.22); border-color: rgba(139,124,255,0.65); }
-  .chip small { margin-left: 7px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-  .chip.active small { color: #cfc8ff; }
+  .chip .cn { font-size: 0.86rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip .cm { display: flex; justify-content: space-between; font-size: 0.74rem; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .chip .cm b { color: var(--c); font-weight: 700; }
+  .chip .cb { height: 4px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
+  .chip .cb i { display: block; height: 100%; background: var(--c); border-radius: 4px; }
+  .chip.active { color: #fff; background: rgba(139,124,255,0.18); border-color: rgba(139,124,255,0.75); box-shadow: 0 0 0 1px rgba(139,124,255,0.45); }
+  .chip.full { background: linear-gradient(135deg, rgba(255,214,102,0.20), rgba(255,170,60,0.10)); border-color: rgba(255,205,90,0.65); color: #ffe6a8; }
+  .chip.full .cb i { background: linear-gradient(90deg, #ffd666, #ffae3c); }
+  .chip.full .cm b { color: #ffd666; }
+  .chip.full.active { box-shadow: 0 0 0 2px rgba(139,124,255,0.8); }
   #legend { margin-bottom: 16px; }
   #legend summary { font-size: 0.85rem; }
   .legend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px 22px; margin-top: 12px; font-size: 0.86rem; color: var(--text-2); }
@@ -63,6 +76,7 @@
     <div class="stats" id="summary"></div>
   </div>
 
+  <div class="seg" id="games" style="display:none; margin-bottom: 14px"></div>
   <div class="tools">
     <div class="search-wrap"><i data-icon="search"></i><input id="search" class="field" type="search" placeholder="Search by name, number or set (é = e)…" autocomplete="off"></div>
     <div id="toggles">
@@ -71,6 +85,11 @@
       <button class="btn btn-sm" id="togDupes" title="Hide cards you own more than one copy of">Hide duplicates</button>
     </div>
   </div>
+  <div id="setbar"><span class="eyebrow">Sets</span>
+    <select id="setSort" class="field" title="Order of the set buttons">
+      <option value="new">Newest first</option><option value="name">A–Z</option>
+      <option value="most">Most complete</option><option value="least">Least complete</option>
+    </select></div>
   <div id="chips"></div>
 
   <details id="legend" class="plain">
@@ -90,6 +109,12 @@
       <div class="row"><span class="ri ir">&#9733;</span> illustration rare</div>
       <div class="row"><span class="ri ir">&#9733;&#9733;</span> special illustration rare</div>
       <div class="row" id="legendMega"> Mega hyper rare</div>
+      <div class="lh eyebrow">Rarity — One Piece</div>
+      <div class="row"><span class="ri rr">&#9733;&#9733;</span> super rare</div>
+      <div class="row"><span class="ri ir">&#9733;&#9733;&#9733;</span> secret rare</div>
+      <div class="row"><span class="ri ur">L</span> leader</div>
+      <div class="row"><span class="ri ir">SP</span> special card</div>
+      <div class="row"><span class="ri ir">&#10022;</span> treasure rare</div>
     </div>
   </details>
 
@@ -106,27 +131,76 @@
 // earlier finished batch (prior_collection), grouped by set.
 const $ = id => document.getElementById(id);
 $("legendMega").insertAdjacentHTML("afterbegin", '<span class="ri ir">' + DIAMOND + "</span>");
-let sets = [], activeId = null;
+let allSets = [], sets = [], activeId = null, game = null;
+try { game = localStorage.getItem("collectionGame"); } catch (e) {}
 let showMissing = false, hideDupes = false, finIncomplete = false;
 const incomplete = c => c.possible.some(f => !(c.finishes[f] > 0));
 
 async function load() {
-  sets = await (await fetch("/owned-sets?t=" + Date.now())).json();
+  const [gl, ss] = await Promise.all([fetch("/games?t=" + Date.now()), fetch("/owned-sets?t=" + Date.now())]);
+  const games = await gl.json();
+  allSets = await ss.json();
+  // one tab per game in the card catalog (hidden while there's only one), even before you own any of it
+  if (!games.some(g => g.id === game) && games.length) game = games[0].id;
+  const gameName = (games.find(g => g.id === game) || {}).name || "";
+  sets = allSets.filter(s => s.game === game);
+  const gb = $("games");
+  gb.style.display = games.length > 1 ? "" : "none";
+  gb.innerHTML = games.map(g => '<button data-game="' + esc(g.id) + '"' + (g.id === game ? ' class="active"' : "") + ">" + esc(g.name) +
+    '<span class="count">' + g.copies.toLocaleString() + "</span></button>").join("");
+  gb.querySelectorAll("button").forEach(b => b.onclick = () => {
+    game = b.dataset.game;
+    try { localStorage.setItem("collectionGame", game); } catch (e) {}
+    $("search").value = ""; searching = ""; activeId = null; load();
+  });
   const distinct = sets.reduce((n, s) => n + s.distinct, 0);
   const copies = sets.reduce((n, s) => n + s.current + s.earlier, 0);
-  $("summary").innerHTML = [[sets.length, "sets"], [distinct.toLocaleString(), "distinct cards"], [copies.toLocaleString(), "copies"]]
+  const value = sets.reduce((n, s) => n + s.value, 0);
+  $("summary").innerHTML = [[sets.length, "sets"], [distinct.toLocaleString(), "distinct cards"], [copies.toLocaleString(), "copies"], [usd(value), "market value"]]
     .map(([v, l]) => '<div class="stat"><b>' + v + "</b><span>" + l + "</span></div>").join("");
   $("empty").style.display = sets.length ? "none" : "block";
-  const chips = $("chips");
-  chips.innerHTML = "";
-  sets.forEach(s => {
-    const b = document.createElement("button");
-    b.className = "chip" + (s.id === activeId ? " active" : "");
-    b.innerHTML = esc(s.name) + "<small>" + s.distinct + "</small>";
-    b.onclick = () => { $("search").value = ""; searching = ""; show(s.id); };
-    chips.appendChild(b);
-  });
+  $("empty").innerHTML = icon("grid") + "<b>No " + esc(gameName) + " cards yet</b>Scan and sort a batch — your cards show up here." +
+    (games.length > 1 ? " Search with “Show missing” on to browse the whole " + esc(gameName) + " catalog." : "");
+  if (!sets.length) { $("title").textContent = ""; $("sub").textContent = ""; $("completion").innerHTML = ""; $("grid").innerHTML = ""; activeId = null; }
+  renderChips();
   if (sets.length) show(sets.some(s => s.id === activeId) ? activeId : sets.reduce((a, b) => b.distinct > a.distinct ? b : a).id);
+}
+
+// % of the set's cards owned (floor, so 100% really means complete)
+const pctOf = s => s.total ? Math.min(100, Math.floor(100 * s.distinct / s.total)) : 0;
+let setSort = "new";
+try { setSort = localStorage.getItem("collectionSetSort") || "new"; } catch (e) {}
+$("setSort").value = setSort;
+$("setSort").onchange = e => { setSort = e.target.value; try { localStorage.setItem("collectionSetSort", setSort); } catch (x) {} renderChips(); };
+
+function renderChips() {
+  $("setbar").style.display = sets.length ? "" : "none";
+  // newest first, kept together by series (a series sits where its newest set does)
+  const newest = {};
+  sets.forEach(s => { const k = s.series || ""; if ((s.release || "") > (newest[k] || "")) newest[k] = s.release; });
+  const byDate = (a, b) => (b.release || "").localeCompare(a.release || "") || a.name.localeCompare(b.name);
+  const by = {
+    new: (a, b) => (newest[b.series || ""] || "").localeCompare(newest[a.series || ""] || "")
+      || (b.series || "").localeCompare(a.series || "", undefined, { numeric: true }) || byDate(a, b),
+    name: (a, b) => a.name.localeCompare(b.name),
+    most: (a, b) => pctOf(b) - pctOf(a) || a.name.localeCompare(b.name),
+    least: (a, b) => pctOf(a) - pctOf(b) || a.name.localeCompare(b.name),
+  }[setSort];
+  const list = [...sets].sort(by);
+  // series headings when sorting by date and series actually group several sets (Pokemon eras; not One Piece's one-set series)
+  const grouped = setSort === "new" && new Set(list.map(s => s.series)).size < list.length;
+  let html = "", last = null;
+  list.forEach(s => {
+    if (grouped && s.series !== last) { last = s.series; html += '<div class="grp">' + esc(s.series || "Other") + "</div>"; }
+    const pct = pctOf(s);
+    html += '<button class="chip' + (pct >= 100 ? " full" : "") + (s.id === activeId ? " active" : "") + '" data-id="' + esc(s.id) +
+      '" style="--c: hsl(' + Math.round(pct * 1.2) + ' 70% 58%)" title="' + esc(s.name) + " — " + s.distinct + " of " + (s.total || "?") + ' cards">' +
+      '<span class="cn">' + (pct >= 100 ? "★ " : "") + esc(s.name) + "</span>" +
+      '<span class="cm"><span>' + s.distinct + " / " + (s.total || "?") + "</span><b>" + pct + "%</b></span>" +
+      '<span class="cb"><i style="width:' + pct + '%"></i></span></button>';
+  });
+  $("chips").innerHTML = html;
+  $("chips").querySelectorAll(".chip").forEach(b => b.onclick = () => { $("search").value = ""; searching = ""; show(b.dataset.id); });
 }
 
 function tileHtml(c) {
@@ -135,7 +209,7 @@ function tileHtml(c) {
   return '<div class="tile' + (q ? "" : " missing") + '"><img src="' + esc(c.image || "") + '" loading="lazy" alt="">' +
     '<span class="qty' + (q > 1 ? " dup" : "") + '">' + (q ? "×" + q : "—") + "</span>" +
     '<div class="nm"><span class="t">#' + esc(c.number) + " " + esc(c.name) + "</span>" + rarityIcon(c.rarity) + "</div>" +
-    '<div class="src">' + (c.set ? esc(c.set) + " · " : "") + src + "</div>" +
+    '<div class="src">' + (c.set ? esc(c.set) + " · " : "") + src + (c.price ? " · " + usd(c.price) + (q > 1 ? " ea" : "") : "") + "</div>" +
     '<div class="fin">' + finishBoxes(c.possible, c.finishes, { short: true, guessed: !c.finish_known }) + "</div>" +
     (q ? '<button class="btn btn-sm btn-danger rm" data-id="' + esc(c.id) + '" data-name="' + esc(c.name) + '">Remove 1</button>' : "") + "</div>";
 }
@@ -144,8 +218,9 @@ function tileHtml(c) {
 let searchTimer = null, searching = "";
 async function runSearch() {
   const q = searching;
-  if (q.length < 2) { if (activeId) show(activeId); return; }
-  const res = await (await fetch("/search-cards?q=" + encodeURIComponent(q) + "&missing=" + (showMissing ? 1 : 0) + "&t=" + Date.now())).json();
+  $("empty").style.display = q.length < 2 && !sets.length ? "block" : "none";
+  if (q.length < 2) { if (activeId) show(activeId); else $("grid").innerHTML = $("title").textContent = $("sub").textContent = ""; return; }
+  const res = await (await fetch("/search-cards?q=" + encodeURIComponent(q) + "&missing=" + (showMissing ? 1 : 0) + "&game=" + encodeURIComponent(game || "") + "&t=" + Date.now())).json();
   if (q !== searching) return;  // a newer keystroke superseded this one
   let list = res.cards;
   if (hideDupes) list = list.filter(c => c.current + c.earlier <= 1);
@@ -171,7 +246,7 @@ $("togDupes").onclick = () => { hideDupes = toggle("togDupes", hideDupes); rerun
 async function show(id) {
   activeId = id;
   const s = sets.find(x => x.id === id);
-  document.querySelectorAll(".chip").forEach((c, k) => c.classList.toggle("active", sets[k] && sets[k].id === id));
+  document.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", c.dataset.id === id));
   const res = await (await fetch("/set-cards?id=" + encodeURIComponent(id) + "&missing=" + (showMissing ? 1 : 0) + "&t=" + Date.now())).json();
   let list = res.cards;
   // Player's Guide order: printed collector number (secret rares past the printed total fall last)
@@ -179,9 +254,9 @@ async function show(id) {
   const owned = list.filter(c => c.current + c.earlier > 0);
   const copies = owned.reduce((n, c) => n + c.current + c.earlier, 0);
   const total = res.total || list.length;
-  const pct = total ? Math.round(100 * (showMissing ? owned.length : s.distinct) / total) : 0;
+  const pct = total ? Math.min(100, Math.floor(100 * (showMissing ? owned.length : s.distinct) / total)) : 0;
   $("title").textContent = s.name;
-  $("sub").textContent = (showMissing ? owned.length : s.distinct) + " of " + total + " cards · " + copies + " copies";
+  $("sub").textContent = (showMissing ? owned.length : s.distinct) + " of " + total + " cards · " + copies + " copies · " + usd(s.value);
   $("completion").innerHTML = '<small>' + pct + "% complete</small>" + '<div class="progress"><i style="width:' + pct + '%"></i></div>';
   if (hideDupes) list = list.filter(c => c.current + c.earlier <= 1);
   if (finIncomplete) list = list.filter(incomplete);

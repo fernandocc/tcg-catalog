@@ -82,12 +82,15 @@
             <div class="label">Put it in</div>
             <div id="setbox" class="setbadge"></div>
             <div id="finCur" class="fin"></div>
-            <div class="label">Finish</div>
-            <div class="seg" id="variantRow">
-              <button data-variant="regular">Regular</button>
-              <button data-variant="holofoil">Holofoil</button>
-              <button data-variant="reverse holofoil">Reverse holo</button>
+            <div id="finishWrap">
+              <div class="label">Finish</div>
+              <div class="seg" id="variantRow">
+                <button data-variant="regular">Regular</button>
+                <button data-variant="holofoil">Holofoil</button>
+                <button data-variant="reverse holofoil">Reverse holo</button>
+              </div>
             </div>
+            <div id="printWrap" style="display:none"></div>
             <div class="nav">
               <button class="btn btn-sm" id="prev"><i data-icon="left"></i>Back</button>
               <button class="btn btn-sm" id="newest">Newest<i data-icon="skip"></i></button>
@@ -196,6 +199,8 @@ function render() {
   document.querySelectorAll("#variantRow button").forEach(btn => btn.classList.toggle("active", variantKey(btn.dataset.variant) === c.norm_variant));
   showFinishes($("finCur"), c.card_id, true);
   $("err").textContent = "";
+  $("finishWrap").style.display = usesFinishButtons(c) ? "" : "none";
+  showPrintings($("printWrap"), c, async () => { await loadCards(); render(); }, $("err"));
   resetDelete();
 }
 function variantKey(l) { return l === "reverse holofoil" ? "reverse" : l === "holofoil" ? "holo" : "normal"; }

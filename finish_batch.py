@@ -9,10 +9,16 @@
 4. Clears the live scan tables (scan_log/collection/imports/unmatched), the viewer
    data and the generated out/ views, and the scanner's last-card memory
 
+    ./venv/bin/python finish_batch.py --discard
+
+Throws the current batch away instead (nothing goes into `prior_collection`): backs up to
+collection.db.discarded-<timestamp>, then does step 4.
+
 Refuses to run while live_scanner.py is running (it would keep adding cards).
 """
 import shutil
 import sqlite3
+import sys
 import time
 from pathlib import Path
 
@@ -30,14 +36,16 @@ db.execute("""CREATE TABLE IF NOT EXISTS prior_collection (
 n_scans = db.execute("SELECT COUNT(*) FROM scan_log").fetchone()[0]
 if n_scans == 0:
     raise SystemExit("Nothing to finish: scan_log is empty.")
+discard = "--discard" in sys.argv
 
 nums = [int(b[5:]) for (b,) in db.execute("SELECT DISTINCT batch FROM prior_collection") if b.startswith("batch") and b[5:].isdigit()]
 batch = f"batch{max(nums, default=0) + 1}"
-backup = f"collection.db.{batch}-{time.strftime('%Y%m%d-%H%M')}"
+backup = f"collection.db.{'discarded' if discard else batch}-{time.strftime('%Y%m%d-%H%M%S')}"
 shutil.copy("collection.db", backup)
 
-db.execute("""INSERT INTO prior_collection
-    SELECT card_id, variant, condition, language, qty, ? FROM collection""", (batch,))
+if not discard:
+    db.execute("""INSERT INTO prior_collection
+        SELECT card_id, variant, condition, language, qty, ? FROM collection""", (batch,))
 for t in ("scan_log", "collection", "imports", "unmatched"):
     db.execute(f"DELETE FROM {t}")
 db.commit()
@@ -52,5 +60,8 @@ from sort_viewer import write_collection_snapshot
 write_collection_snapshot()
 db = sqlite3.connect("collection.db")
 total = db.execute("SELECT COUNT(*), SUM(qty) FROM prior_collection").fetchone()
-print(f"{batch}: {n_scans} scans backed up to {backup}")
+if discard:
+    print(f"Discarded {n_scans} scans (a copy is kept in {backup}); nothing was added to the collection")
+else:
+    print(f"{batch}: {n_scans} scans backed up to {backup}")
 print(f"prior_collection now holds {total[0]} distinct cards / {total[1]} copies across all finished batches")

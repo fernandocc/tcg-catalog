@@ -134,6 +134,10 @@ kbd {
 }
 .field:focus { border-color: rgba(139, 124, 255, 0.7); box-shadow: 0 0 0 4px rgba(139, 124, 255, 0.15); }
 .field::placeholder { color: var(--text-3); }
+select.field { cursor: pointer; }
+select.field option { background: var(--surface-solid); color: var(--text); }
+/* sorter card: Pokemon finish buttons / One Piece printing picker (wrappers join the parent's flex gap) */
+#finishWrap, #printWrap { display: contents; }
 .search-wrap { position: relative; }
 .search-wrap svg { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); width: 17px; height: 17px; color: var(--text-3); pointer-events: none; }
 .search-wrap .field { padding-left: 40px; }

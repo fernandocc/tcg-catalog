@@ -46,6 +46,7 @@
   .prow:first-of-type { border-top: 0; padding-top: 4px; }
   .prow .pl { display: flex; align-items: center; gap: 10px; font-weight: 600; }
   .prow .pv { color: var(--text-2); font-size: 0.9rem; min-width: 0; }
+  .prow .pb { display: flex; flex-direction: column; gap: 8px; }
   .prow .pb .btn { min-width: 150px; }
   @media (max-width: 640px) { .prow { grid-template-columns: 1fr; gap: 8px; } }
   #phoneBox { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 18px; align-items: center; }
@@ -93,9 +94,10 @@
       <div class="panel-head"><h2>Session</h2><span><button class="btn btn-sm btn-ghost" id="pStop"><i data-icon="stop"></i>Stop everything</button> <button class="btn btn-sm btn-ghost" id="pQuit" title="Stop the camera, the scanner and the app itself"><i data-icon="power"></i>Quit app</button></span></div>
       <div class="prow"><span class="pl"><i class="dot" id="dCam"></i>Camera server</span><span class="pv" id="pCam"></span><span class="pb"><button class="btn" id="pCamBtn"></button></span></div>
       <div class="prow"><span class="pl"><i class="dot" id="dScan"></i>Scanner</span><span class="pv" id="pScan"></span><span class="pb"><button class="btn" id="pScanBtn"></button></span></div>
-      <div class="prow"><span class="pl"><i class="dot" id="dBatch"></i>This batch</span><span class="pv" id="pBatch"></span><span class="pb"><button class="btn" id="pFin"><i data-icon="check"></i>Finish batch</button></span></div>
+      <div class="prow"><span class="pl"><i class="dot" id="dBatch"></i>This batch</span><span class="pv" id="pBatch"></span><span class="pb"><button class="btn" id="pFin"><i data-icon="check"></i>Finish batch</button><button class="btn btn-danger" id="pDiscard" title="Throw away this batch's scans without adding them to the collection (a backup copy is kept)"><i data-icon="trash"></i>Discard scans</button></span></div>
       <div class="prow"><span class="pl"><i class="dot on"></i>Collection</span><span class="pv" id="pColl"></span><span class="pb"><button class="btn" id="pBackup"><i data-icon="db"></i>Back up now</button></span></div>
       <div class="prow"><span class="pl"><i class="dot on"></i>Saved in</span><span class="pv faint" id="pDir" style="overflow-wrap:anywhere"></span><span class="pb"><button class="btn" id="pOpen"><i data-icon="folder"></i>Open folder</button></span></div>
+      <div class="prow"><span class="pl"><i class="dot" id="dPrice"></i>Prices</span><span class="pv" id="pPrice"></span><span class="pb"><button class="btn" id="pPriceBtn" title="Download today's TCGplayer market prices for the cards you own"><i data-icon="refresh"></i>Update prices</button></span></div>
       <div class="prow"><span class="pl"><i class="dot" id="dData"></i>Card data</span><span class="pv" id="pData"></span><span class="pb"><button class="btn" id="pUpdate"><i data-icon="refresh"></i>Check for new sets</button></span></div>
       <details id="logs" class="plain" style="margin-top:12px"><summary>Logs (for troubleshooting)</summary><div class="eyebrow" style="margin-top:10px">Scanner</div><pre id="logScan"></pre><div class="eyebrow">Camera server</div><pre id="logCam"></pre></details>
     </section>
@@ -142,9 +144,14 @@ function paint(s) {
   $("pScanBtn").className = "btn " + (s.scanner ? "btn-danger" : "btn-primary");
   $("dBatch").className = "dot " + (s.live_scans ? "wait" : "off");
   $("pBatch").textContent = s.live_scans ? s.live_scans + " scans waiting — sort them, then finish the batch" : "Empty — ready to scan";
-  $("pFin").disabled = !s.live_scans;
+  $("pFin").disabled = $("pDiscard").disabled = !s.live_scans;
   $("pDir").textContent = s.data_dir || "";
   $("pColl").textContent = s.copies.toLocaleString() + " copies saved across " + s.batches + " batch" + (s.batches === 1 ? "" : "es");
+  const pr = s.prices || {};
+  $("dPrice").className = "dot " + (pr.error ? "off" : pr.running ? "wait" : pr.updated ? "on" : "off");
+  $("pPrice").textContent = pr.running ? (pr.message || "Updating…") : pr.error ? "Couldn't update: " + pr.error
+    : pr.updated ? "TCGplayer market prices from " + pr.updated : "Not downloaded yet";
+  $("pPriceBtn").disabled = !!pr.running;
   const st = s.setup || {};
   $("dData").className = "dot " + (st.ready ? "on" : "wait");
   $("pData").textContent = st.running ? (st.phase || "Working…") : st.ready ? st.catalog_cards.toLocaleString() + " cards, " + st.hashed_cards.toLocaleString() + " recognisable" : "Not installed yet";
@@ -167,7 +174,8 @@ async function stats() {
   try {
     const sets = await (await fetch("/owned-sets")).json();
     const d = sets.reduce((n, s) => n + s.distinct, 0), c = sets.reduce((n, s) => n + s.current + s.earlier, 0);
-    $("stats").innerHTML = [[sets.length, "sets"], [d.toLocaleString(), "cards"], [c.toLocaleString(), "copies"]]
+    const v = sets.reduce((n, s) => n + s.value, 0);
+    $("stats").innerHTML = [[sets.length, "sets"], [d.toLocaleString(), "cards"], [c.toLocaleString(), "copies"], [usd(v), "value"]]
       .map(([v, l]) => '<div class="stat"><b>' + v + "</b><span>" + l + "</span></div>").join("");
   } catch (e) {}
 }
@@ -187,6 +195,7 @@ $("pQuit").onclick = async () => {
   document.body.innerHTML = '<main class="page"><div class="empty-state" style="margin-top:18vh"><b>TCG Catalog is closed</b>You can close this tab. Open the app again from its shortcut.</div></main>';
 };
 $("pStop").onclick = () => run($("pStop"), "/api/stop-all", {}, "Camera server and scanner stopped.");
+$("pPriceBtn").onclick = () => run($("pPriceBtn"), "/api/prices", {}, "Updating prices — takes about 10 seconds.");
 $("pUpdate").onclick = () => run($("pUpdate"), "/api/setup", { kind: "update" }, "Checking for new sets — progress shows at the top of this page.");
 $("seedBtn").onclick = () => run($("seedBtn"), "/api/setup", { kind: "seed" }, "Installing card data…");
 $("updBtn").onclick = () => run($("updBtn"), "/api/setup", { kind: "update" }, "Downloading the newest card list — this can take a while.");
@@ -197,6 +206,14 @@ $("pFin").onclick = () => {
   if (!finArmed) { finArmed = true; b.classList.add("armed"); b.textContent = "Click again to save"; finTimer = setTimeout(() => { finArmed = false; b.classList.remove("armed"); b.innerHTML = icon("check") + "Finish batch"; }, 4000); return; }
   clearTimeout(finTimer); finArmed = false; b.classList.remove("armed"); b.innerHTML = icon("check") + "Finish batch";
   run(b, "/api/finish-batch", {});
+};
+let disArmed = false, disTimer = null;
+const disLabel = () => icon("trash") + "Discard scans";
+$("pDiscard").onclick = () => {
+  const b = $("pDiscard");
+  if (!disArmed) { disArmed = true; b.classList.add("armed"); b.textContent = "Click again: discard " + ((S && S.live_scans) || 0) + " scans"; disTimer = setTimeout(() => { disArmed = false; b.classList.remove("armed"); b.innerHTML = disLabel(); }, 4000); return; }
+  clearTimeout(disTimer); disArmed = false; b.classList.remove("armed"); b.innerHTML = disLabel();
+  run(b, "/api/discard-batch", {});
 };
 async function loadLogs() {
   if (!$("logs").open) return;

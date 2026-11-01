@@ -141,6 +141,28 @@ def set_variant(db, scan_id, new_variant):
     db.commit()
     return True
 
+def set_card(db, scan_id, new_card_id):
+    """Re-point a scan at a different catalog card (e.g. the right One Piece printing
+    when the camera can't tell a reprint from the original). Moves this scan row's
+    `collection` contribution to the new card, same reversal pattern as set_variant."""
+    row = db.execute("SELECT card_id, variant, qty, condition, language FROM scan_log WHERE id=?",
+                      (scan_id,)).fetchone()
+    if not row:
+        return False
+    card_id, variant, qty, condition, language = row
+    if card_id == new_card_id:
+        return True
+    _remove_collection_contribution(db, card_id, variant, qty, condition, language)
+    db.execute("""INSERT INTO collection VALUES (?,?,?,?,?)
+        ON CONFLICT(card_id, variant, condition, language)
+        DO UPDATE SET qty = qty + excluded.qty""",
+        (new_card_id, variant, condition, language, qty))
+    name = db.execute("SELECT name FROM cards WHERE id=?", (new_card_id,)).fetchone()
+    db.execute("UPDATE scan_log SET card_id=?, raw_name=COALESCE(?, raw_name) WHERE id=?",
+               (new_card_id, name[0] if name else None, scan_id))
+    db.commit()
+    return True
+
 def ingest_live_scan(db, card_id, variant="normal", condition="NM", language="English"):
     """Commit one card identified by the live camera scanner. The card is
     already fully known (card_id came straight from the hash match against

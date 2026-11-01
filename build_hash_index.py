@@ -28,7 +28,30 @@ IMAGE_CACHE = Path("image_cache")
 HASH_SIZE = 16
 COMMIT_EVERY = 50
 
-FALLBACK_IMAGE = "https://images.scrydex.com/pokemon/{}/small"   # second source when the catalog's link is dead
+# Games whose reference pictures carry a watermark the real cards don't have (One Piece: a big
+# "SAMPLE" across the middle on every source, official site included). That band is painted flat
+# grey before fingerprinting -- here AND on the camera picture in live_scanner.py -- so it doesn't
+# count: a watermark adds ~45 (up to ~77) to the distance otherwise, too close to the match cut-off.
+MASKED_GAMES = ("onepiece",)
+WATERMARK_BAND = (0.39, 0.61)   # fraction of the card height, upright card
+
+
+def mask_watermark(img):
+    from PIL import ImageDraw
+    img = img.convert("RGB")
+    w, h = img.size
+    ImageDraw.Draw(img).rectangle([0, int(h * WATERMARK_BAND[0]), w, int(h * WATERMARK_BAND[1])], fill=(128, 128, 128))
+    return img
+
+
+def fingerprint(img, masked=False):
+    """(phash_hex, dhash_hex) of a card picture; masked=True for MASKED_GAMES."""
+    if masked:
+        img = mask_watermark(img)
+    return str(imagehash.phash(img, hash_size=HASH_SIZE)), str(imagehash.dhash(img, hash_size=HASH_SIZE))
+
+
+FALLBACK_IMAGE = "https://images.scrydex.com/pokemon/{}/small"   # Pokemon only: second source when the catalog's link is dead
 MISSING = IMAGE_CACHE / "missing.txt"                             # cards with no image anywhere: don't retry every run
 
 
@@ -49,11 +72,11 @@ def download(url, dest, attempts=3):
 
 
 def fetch_image(card_id, image_url, dest):
-    """Catalog image link first, then the scrydex CDN (same <set>-<number> naming)."""
+    """Catalog image link first, then (Pokemon) the scrydex CDN (same <set>-<number> naming)."""
     if image_url and download(image_url, dest):
         return True
-    raw_id = card_id.split(":", 1)[-1]
-    return download(FALLBACK_IMAGE.format(raw_id), dest)
+    game, raw_id = card_id.split(":", 1)
+    return game == "pokemon" and download(FALLBACK_IMAGE.format(raw_id), dest)
 
 
 def build(db, on_progress=lambda done, total, msg: None, should_stop=lambda: False):
@@ -80,16 +103,16 @@ def build(db, on_progress=lambda done, total, msg: None, should_stop=lambda: Fal
                 on_progress(i, total, f"no image anywhere for {card_id} (skipped)")
                 continue
         try:
-            img = Image.open(img_path)
-            phash = imagehash.phash(img, hash_size=HASH_SIZE)
-            dhash = imagehash.dhash(img, hash_size=HASH_SIZE)
+            phash, dhash = fingerprint(Image.open(img_path), card_id.split(":", 1)[0] in MASKED_GAMES)
         except Exception as e:
             print(f"  hash failed for {card_id} ({e!r}), removing cached file")
             img_path.unlink(missing_ok=True)
+            with open(MISSING, "a") as f:   # e.g. optcgapi serves an SVG "no picture" placeholder as .jpg
+                f.write(card_id + "\n")
             on_progress(i, total, f"couldn't read the image for {card_id} (skipped)")
             continue
         db.execute("INSERT OR REPLACE INTO card_hashes VALUES (?,?,?)",
-                   (card_id, str(phash), str(dhash)))
+                   (card_id, phash, dhash))
         done += 1
         if done % COMMIT_EVERY == 0:
             db.commit()

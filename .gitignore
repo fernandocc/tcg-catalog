@@ -37,3 +37,4 @@ dist/
 # local list of personal strings that must never be published (tools/publish_public.sh)
 .publish_blocklist
 build/
+.prices_updated

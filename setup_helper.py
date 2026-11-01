@@ -2,14 +2,14 @@
 """Second half of the installer (install.sh runs this with the app's own Python).
 
 1. Creates the collection database (if it doesn't exist yet).
-2. Loads the bundled card catalog + recognition fingerprints (data/catalog_pokemon.json.gz),
-   so the scanner works the moment the app opens -- no 3 GB image download.
+2. (The bundled card catalogs + recognition fingerprints, data/catalog_<game>.json.gz, are
+   loaded by the app itself on its first start -- no gigabytes of image downloads.)
 3. Puts a "TCG Catalog" shortcut on the desktop (and in the app menu on Linux).
 
 Safe to run again: existing cards and your collection are never overwritten.
 Set TCG_NO_SHORTCUTS=1 to skip step 3.
 """
-import gzip, json, os, platform, sqlite3, subprocess, sys
+import os, platform, sqlite3, subprocess, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -18,7 +18,6 @@ sys.path.insert(0, str(ROOT))
 import collection_core as core
 
 DB = ROOT / "collection.db"
-SEED = ROOT / "data" / "catalog_pokemon.json.gz"
 NAME = "TCG Catalog"
 
 
@@ -29,23 +28,10 @@ def say(msg):
 def install_card_data():
     db = sqlite3.connect(DB)
     core.schema(db)
-    db.execute("INSERT OR IGNORE INTO games VALUES (?,?)", ("pokemon", "Pokémon TCG"))
     db.commit()
     have = db.execute("SELECT COUNT(*) FROM card_hashes").fetchone()[0]
-    if have:
-        say(f"Card data already installed ({have:,} recognisable cards).")
-        return
-    if not SEED.exists():
-        say("Bundled card data not found -- use 'Download newest sets' on the app's Home page.")
-        return
-    with gzip.open(SEED, "rt", encoding="utf-8") as f:
-        data = json.load(f)
-    db.executemany("INSERT OR IGNORE INTO sets (id, game_id, name, series, release_date, printed_total, total) VALUES (?,?,?,?,?,?,?)", data["sets"])
-    for c in data["cards"]:
-        core.add_card(db, *c)
-    db.executemany("INSERT OR IGNORE INTO card_hashes VALUES (?,?,?)", data["hashes"])
-    db.commit()
-    say(f"Installed {len(data['cards']):,} cards from {len(data['sets'])} sets ({len(data['hashes']):,} recognisable).")
+    say(f"Card data already installed ({have:,} recognisable cards)." if have else
+        "Card data will be installed when the app opens (takes a few seconds).")
 
 
 def desktop_dir():

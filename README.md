@@ -114,4 +114,4 @@ Open the app's **Help** page → *Troubleshooting*. The most common fixes:
 *For developers:* run from source with `bash install.sh` (creates `./venv`, data stays in the
 project folder). `tcg_catalog.spec` builds the app with PyInstaller; `.github/workflows/build.yml`
 builds the Windows installer, macOS disk images and Linux AppImage when a `v*` tag is pushed.
-`tools/make_seed.py` refreshes the bundled card data (`data/catalog_pokemon.json.gz`).
+`tools/make_seed.py` refreshes the bundled card data (`data/catalog_<game>.json.gz`, one file per game).

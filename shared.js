@@ -32,6 +32,9 @@ const ICON_PATHS = {
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
 };
+// "$1,234.56" -- market prices are TCGplayer USD
+const usd = v => "$" + Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 function icon(name, extra) {
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
     (extra ? " " + extra : "") + ">" + (ICON_PATHS[name] || "") + "</svg>";
@@ -158,6 +161,14 @@ function rarityIcon(r) {
   if (k === "mega hyper rare") return t("ir", DIAMOND, "Mega hyper rare");
   if (k.includes("hyper") || k.includes("secret") || k.includes("rainbow")) return t("ir", "&#9733;&#9733;&#9733;", r);
   if (k.includes("shiny")) return t("ir", "&#10022;", r);
+  // One Piece Card Game
+  if (k === "uc") return t("u", "&#9670;", "uncommon");
+  if (k === "sr") return t("rr", "&#9733;&#9733;", "super rare");
+  if (k === "sec") return t("ir", "&#9733;&#9733;&#9733;", "secret rare");
+  if (k === "l") return t("ur", "L", "leader");
+  if (k === "sp") return t("ir", "SP", "special card");
+  if (k === "tr") return t("ir", "&#10022;", "treasure rare");
+  if (k === "don!!") return t("c", "D", "DON!! card");
   return t("r", "&#9830;", r);  // promo / anything else
 }
 
@@ -183,4 +194,30 @@ async function showFinishes(el, cardId, force) {
   }
   const d = finCache[cardId].d;
   el.innerHTML = finishBoxes(d.possible, d.finishes, { rarity: d.rarity, guessed: d.finish_known === false });
+}
+
+/* ---------- printing picker: games whose catalog has one card per printing (One Piece) ----------
+   The camera can't tell same-artwork printings apart (base / reprint / Jolly Roger foil), so the
+   scanner commits the base printing and this picker moves the scan to the right one. */
+function usesFinishButtons(c) { return !c || !c.game_id || c.game_id === "pokemon"; }
+async function showPrintings(wrap, c, onChanged, errEl) {
+  if (!wrap) return;
+  if (usesFinishButtons(c) || !c.card_id) { wrap.style.display = "none"; wrap.innerHTML = ""; return; }
+  const token = c.id + "|" + c.card_id;
+  wrap.dataset.for = token;
+  let list = [];
+  try { list = await (await fetch("/printings?id=" + encodeURIComponent(c.card_id))).json(); } catch (e) { return; }
+  if (wrap.dataset.for !== token) return;   // moved on to another card while this was loading
+  if (list.length < 2) { wrap.style.display = "none"; wrap.innerHTML = ""; return; }
+  const money = p => p ? " · " + usd(p) : "";
+  wrap.style.display = "";
+  wrap.innerHTML = '<div class="label">Printing</div><select class="field printing">' + list.map(x =>
+    '<option value="' + esc(x.id) + '"' + (x.id === c.card_id ? " selected" : "") + ">" + esc(x.name) + " — " + esc(x.set || "") + money(x.price) + "</option>").join("") + "</select>";
+  wrap.querySelector("select").onchange = async e => {
+    try {
+      const d = await (await fetch("/set-printing", { method: "POST", body: JSON.stringify({ id: c.id, card_id: e.target.value }) })).json();
+      if (!d.ok) { if (errEl) errEl.textContent = d.error; return; }
+      await onChanged();
+    } catch (err) { if (errEl) errEl.textContent = String(err); }
+  };
 }

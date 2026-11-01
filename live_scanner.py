@@ -32,11 +32,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import cv2
-import imagehash
 import numpy as np
 from PIL import Image
 
 import collection_core as core
+from build_hash_index import MASKED_GAMES, fingerprint
 
 LIVE_FRAME_PATH = Path("live_frame.jpg")
 LIVE_CAM_PATH = Path("live_cam.jpg")   # camera view only (with the detector outline) for the web pages
@@ -87,6 +87,12 @@ BEST_WINDOW = 12
 BEST_MIN_VOTES = 5
 STABLE_FRAMES = 8  # consecutive frames the same card must win before committing
 WARP_SIZE = (245, 342)  # matches the reference images' own aspect/size
+# Games whose catalog has one card per PRINTING (One Piece: base, reprint, Jolly Roger foil, parallel...).
+# Printings of the same card number whose pictures are this close are the same artwork -- the camera
+# can't tell them apart, so votes would split between them. They're folded into one candidate (the
+# base printing: no _suffix in its id) and the right printing is picked in the sorter afterwards.
+LOOKALIKE_GAMES = ("onepiece",)
+LOOKALIKE_DISTANCE = 100
 
 
 def _hex_to_bits(hex_str):
@@ -101,22 +107,24 @@ def _hex_to_bits(hex_str):
 
 def load_hash_index(db):
     rows = db.execute("""
-        SELECT h.card_id, h.phash, h.dhash, c.name, s.name, g.name
+        SELECT h.card_id, h.phash, h.dhash, c.name, s.name, g.name, c.game_id, c.number
         FROM card_hashes h
         JOIN cards c ON c.id = h.card_id
         LEFT JOIN sets s ON s.id = c.set_id
         LEFT JOIN games g ON g.id = c.game_id""").fetchall()
     if not rows:
         sys.exit("No reference hashes found -- run build_hash_index.py first.")
-    card_ids, phashes, dhashes, names, sets, games = [], [], [], [], [], []
-    for card_id, phash_hex, dhash_hex, name, set_name, game_name in rows:
+    card_ids, phashes, dhashes, names, sets, games, groups = [], [], [], [], [], [], {}
+    for k, (card_id, phash_hex, dhash_hex, name, set_name, game_name, game_id, number) in enumerate(rows):
+        if game_id in LOOKALIKE_GAMES and number:
+            groups.setdefault((game_id, number), []).append(k)
         card_ids.append(card_id)
         phashes.append(_hex_to_bits(phash_hex))
         dhashes.append(_hex_to_bits(dhash_hex))
         names.append(name)
         sets.append(set_name)
         games.append(game_name)
-    return {
+    index = {
         "card_ids": card_ids,
         "phashes": np.array(phashes, dtype=np.uint8),
         "dhashes": np.array(dhashes, dtype=np.uint8),
@@ -124,6 +132,29 @@ def load_hash_index(db):
         "sets": sets,
         "games": games,
     }
+    index["canon"] = _lookalike_canon(index, groups)
+    # rows fingerprinted with the watermark band masked (see build_hash_index.MASKED_GAMES)
+    index["masked"] = np.flatnonzero([cid.split(":", 1)[0] in MASKED_GAMES for cid in card_ids])
+    return index
+
+
+def _lookalike_canon(index, groups):
+    """canon[i] = the index that candidate i votes as (itself, unless it's a look-alike printing)."""
+    canon = np.arange(len(index["card_ids"]))
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        # base printing first (OP01-006 before OP01-006_p1 / _r1), then by id
+        members = sorted(members, key=lambda k: ("_" in index["card_ids"][k], index["card_ids"][k]))
+        for pos, k in enumerate(members):
+            if canon[k] != k:
+                continue
+            for j in members[pos + 1:]:
+                if canon[j] == j:
+                    d = int(np.sum(index["phashes"][k] != index["phashes"][j]) + np.sum(index["dhashes"][k] != index["dhashes"][j]))
+                    if d <= LOOKALIKE_DISTANCE:
+                        canon[j] = k
+    return canon
 
 
 def hamming_distance(bits_matrix, query_bits):
@@ -131,12 +162,21 @@ def hamming_distance(bits_matrix, query_bits):
     return np.sum(bits_matrix != query_bits, axis=1)
 
 
-def best_match(index, phash_hex, dhash_hex):
-    pdist = hamming_distance(index["phashes"], _hex_to_bits(phash_hex))
-    ddist = hamming_distance(index["dhashes"], _hex_to_bits(dhash_hex))
-    combined = pdist + ddist
+def _distances(index, img, masked, rows=slice(None)):
+    phash_hex, dhash_hex = fingerprint(img, masked)
+    return (hamming_distance(index["phashes"][rows], _hex_to_bits(phash_hex))
+            + hamming_distance(index["dhashes"][rows], _hex_to_bits(dhash_hex)))
+
+
+def best_match(index, img):
+    """Best catalog candidate for an upright card picture: (index row, combined distance).
+    Rows of watermark-masked games are compared against the masked picture."""
+    combined = _distances(index, img, False)
+    rows = index["masked"]
+    if len(rows):
+        combined[rows] = _distances(index, img, True, rows)
     i = int(np.argmin(combined))
-    return i, int(combined[i])
+    return int(index["canon"][i]), int(combined[i])
 
 
 def order_corners(pts):
@@ -494,9 +534,7 @@ def main():
             i, dist = None, None
             for rotation in (None, Image.ROTATE_90, Image.ROTATE_180, Image.ROTATE_270):
                 rotated = pil_img if rotation is None else pil_img.transpose(rotation)
-                phash_hex = str(imagehash.phash(rotated, hash_size=HASH_SIZE))
-                dhash_hex = str(imagehash.dhash(rotated, hash_size=HASH_SIZE))
-                i2, dist2 = best_match(index, phash_hex, dhash_hex)
+                i2, dist2 = best_match(index, rotated)
                 if dist is None or dist2 < dist:
                     i, dist = i2, dist2
             frame_top = (i, dist)

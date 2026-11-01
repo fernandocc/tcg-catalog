@@ -6,7 +6,7 @@ per game; adding a future TCG means writing one more adapter, no schema or
 scanner changes.
 
 Usage:
-  ./venv/bin/python catalog_sync.py pokemon       # one game
+  ./venv/bin/python catalog_sync.py pokemon       # one game (or: onepiece)
   ./venv/bin/python catalog_sync.py --all         # every implemented adapter
 
 Idempotent: INSERT OR IGNORE everywhere, safe to re-run (e.g. after a new set
@@ -56,9 +56,58 @@ def sync_pokemon(db, on_progress=lambda msg: print(msg)):
         total_cards += len(set_cards)
         on_progress(f"[{GAME}] {i}/{len(sets)} {set_id}: +{len(set_cards)} cards (running total {total_cards})")
 
+def sync_onepiece(db, on_progress=lambda msg: print(msg)):
+    """Full English One Piece catalog from optcgapi.com (free, no key, refreshed daily).
+    One catalog card per PRINTING, keyed by the API's image id (OP01-006, OP01-006_p1 parallel,
+    OP01-006_r1 reprint, ...) so every printing has its own picture, fingerprint and price.
+    `number` is the printed card number (OP01-006) -- shared by all printings of a card; the
+    scanner and the sorter's "Printing" picker use that to group look-alikes. A printing is filed
+    under the set the API lists it in (a reprint in PRB-01 sorts into PRB-01). Promos and DON!!
+    cards get one set each. The API has no release dates, so sets keep the API's own order in
+    `series` ("One Piece 01", ...) and release_date stays empty. Prices (market) are refreshed on
+    every sync -- unlike Pokemon, they come from the catalog, not from a scan."""
+    GAME = "onepiece"
+    API = "https://optcgapi.com/api"
+    db.execute("INSERT OR IGNORE INTO games VALUES (?,?)", (GAME, "One Piece Card Game"))
+
+    sets = [(s["set_id"], s["set_name"]) for s in _get_json(f"{API}/allSets/")]
+    sets += [(d["structure_deck_id"], d["structure_deck_name"]) for d in _get_json(f"{API}/allDecks/")]
+    sets += [("P", "Promotion Cards"), ("DON", "DON!! Cards")]
+    on_progress(f"[{GAME}] fetched {len(sets)} sets")
+
+    sources = [("allSetCards", None), ("allSTCards", None), ("allPromos", "P"), ("allDonCards", "DON")]
+    rows = []
+    for i, (endpoint, force_set) in enumerate(sources, 1):
+        got = _get_json(f"{API}/{endpoint}/")
+        rows += [(c, force_set) for c in got]
+        on_progress(f"[{GAME}] {i}/{len(sources)} {endpoint}: {len(got)} printings")
+
+    known_sets = {sid for sid, _ in sets}
+    counts, seen, today = {}, set(), time.strftime("%Y-%m-%d")
+    for c, force_set in rows:
+        image_id, image = c.get("card_image_id"), c.get("card_image")
+        if not image_id or image_id in seen:   # a few printings share one image id in the API: keep the first
+            continue
+        seen.add(image_id)
+        set_code = force_set or c.get("set_id")
+        if set_code not in known_sets:
+            sets.append((set_code, c.get("set_name") or set_code)); known_sets.add(set_code)
+        card_id = f"{GAME}:{image_id}"
+        number = c.get("card_set_id") or ("DON!!" if force_set == "DON" else image_id)
+        core.add_card(db, card_id, GAME, f"{GAME}:{set_code}", c.get("card_name"), number, c.get("rarity"), image)
+        price = c.get("market_price") or c.get("inventory_price") or None   # 0.0 = no price known
+        db.execute("UPDATE cards SET name = ?, rarity = ?, image_url = COALESCE(?, image_url), tcg_market_normal = ?, price_updated = ? WHERE id = ?",
+                   (c.get("card_name"), c.get("rarity"), image, price, c.get("date_scraped") or today, card_id))
+        counts[set_code] = counts.get(set_code, 0) + 1
+    for order, (sid, name) in enumerate(sets, 1):
+        db.execute("""INSERT OR REPLACE INTO sets (id, game_id, name, series, release_date, printed_total, total)
+            VALUES (?,?,?,?,NULL,?,?)""", (f"{GAME}:{sid}", GAME, name, f"One Piece {order:02d}", counts.get(sid), counts.get(sid)))
+    db.commit()
+    on_progress(f"[{GAME}] {len(seen)} printings in {len(sets)} sets")
+
 ADAPTERS = {
     "pokemon": sync_pokemon,
-    # "onepiece": sync_onepiece,  # TODO -- optcgapi.com, per ingest_optcg.py's note
+    "onepiece": sync_onepiece,
     # "gundam": sync_gundam,      # TODO -- gcgapi.com weekly dump, per ingest_gcg.py's note
 }
 

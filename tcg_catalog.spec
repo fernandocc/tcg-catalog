@@ -10,14 +10,14 @@ NAME = "TCG Catalog"
 VERSION = os.environ.get("APP_VERSION", "0.0.0")
 
 pages = [(str(p), ".") for p in sorted(ROOT.glob("*.html")) + sorted(ROOT.glob("*.css")) + sorted(ROOT.glob("*.js"))]
-datas = pages + [(str(ROOT / "assets"), "assets"), (str(ROOT / "data" / "catalog_pokemon.json.gz"), "data")]
+datas = pages + [(str(ROOT / "assets"), "assets"), *[(str(p), "data") for p in sorted((ROOT / "data").glob("catalog_*.json.gz"))]]
 
 a = Analysis(
     ["tcg_catalog.py"],
     pathex=[str(ROOT)],
     datas=datas,
     # parts started as roles or imported lazily
-    hiddenimports=["sort_viewer", "phone_cam_server", "live_scanner", "finish_batch", "catalog_sync",
+    hiddenimports=["sort_viewer", "phone_cam_server", "live_scanner", "finish_batch", "catalog_sync", "prices",
                    "build_hash_index", "ingest_delver", "qrcode.image.svg"],
     excludes=["tkinter", "matplotlib", "IPython", "pytest"],
 )

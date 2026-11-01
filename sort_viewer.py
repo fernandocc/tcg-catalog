@@ -64,11 +64,40 @@ def owned_sets():
     earlier finished batches (queried fresh from the db on each call)."""
     db = _owned_db()
     rows = db.execute(f"""
-        SELECT s.id, s.name, COUNT(*), SUM(o.cur), SUM(o.prev)
+        SELECT s.id, s.name, COUNT(*), SUM(o.cur), SUM(o.prev), s.game_id, COALESCE(g.name, s.game_id),
+               s.series, s.release_date, COALESCE(s.total, s.printed_total)
         FROM ({OWNED_SQL}) o JOIN cards c ON c.id = o.card_id JOIN sets s ON s.id = c.set_id
+        LEFT JOIN games g ON g.id = s.game_id
         GROUP BY s.id ORDER BY s.name""").fetchall()
+    value = set_values(db)
     db.close()
-    return [{"id": i, "name": n, "distinct": d, "current": cur, "earlier": prev} for i, n, d, cur, prev in rows]
+    return [{"id": i, "name": n, "distinct": d, "current": cur, "earlier": prev, "game": gid, "game_name": gn,
+             "series": ser, "release": rel, "total": tot, "value": round(value.get(i, 0), 2)}
+            for i, n, d, cur, prev, gid, gn, ser, rel, tot in rows]
+
+
+def games():
+    """Every game with cards in the catalog (so its Collection tab shows even before you own any)."""
+    db = _owned_db()
+    rows = db.execute(f"""
+        SELECT c.game_id, COALESCE(g.name, c.game_id), COUNT(o.card_id), COALESCE(SUM(o.cur + o.prev), 0)
+        FROM cards c LEFT JOIN ({OWNED_SQL}) o ON o.card_id = c.id LEFT JOIN games g ON g.id = c.game_id
+        GROUP BY c.game_id ORDER BY COALESCE(SUM(o.cur + o.prev), 0) DESC, c.game_id""").fetchall()
+    db.close()
+    return [{"id": i, "name": GAME_NAMES.get(i, n), "distinct": d, "copies": q} for i, n, d, q in rows]
+
+
+def printings(card_id):
+    """Every printing that shares this card's printed number in the same game (One Piece:
+    base, reprints, Jolly Roger foil, parallels, promos) -- for the sorter's Printing picker."""
+    db = sqlite3.connect(DB)
+    rows = db.execute("""
+        SELECT c.id, c.name, s.name, c.image_url, c.tcg_market_normal, c.rarity
+        FROM cards c LEFT JOIN sets s ON s.id = c.set_id
+        WHERE c.game_id = ? AND c.number = (SELECT number FROM cards WHERE id = ?)
+        ORDER BY INSTR(c.id, '_') > 0, c.id""", (_game(card_id), card_id)).fetchall()
+    db.close()
+    return [{"id": i, "name": n, "set": sn, "image": img, "price": p, "rarity": r} for i, n, sn, img, p, r in rows]
 
 
 FINISH_OF = {"normal": "standard", "holo": "foil", "reverse": "parallel", "pokeball": "parallel", "masterball": "parallel"}
@@ -76,11 +105,13 @@ FOIL_ONLY = ("double rare", "ultra rare", "rare ultra", "illustration rare", "sp
              "mega hyper rare", "rare secret", "rare rainbow", "shiny rare", "rare shiny", "ace spec")
 
 
-def possible_finishes(rarity, release):
+def possible_finishes(rarity, release, game="pokemon"):
     """Which of the player's-guide boxes (standard / foil / parallel) a card can have,
     inferred from catalog rarity -- the catalog stores no per-finish data. Returns
     (finishes, known); known=False means rarity was blank/unrecognised so all three are shown."""
     r = (rarity or "").strip().lower()
+    if game == "onepiece":   # one catalog card per printing, each with its own fixed finish
+        return ["standard"], True
     if r in ("c", "common", "u", "uncommon"):
         return ["standard", "parallel"], True
     if any(r == x or r.startswith(x) for x in FOIL_ONLY):
@@ -106,16 +137,48 @@ def owned_finishes(db):
     return out
 
 
+PRICE_COLS = "c.tcg_market_normal, c.tcg_market_holo, c.tcg_market_reverse"
+
+
+def _finish_prices(normal, holo, reverse):
+    """TCGplayer market price per player's-guide finish (Normal / Holofoil / Reverse Holofoil)."""
+    return {f: v for f, v in (("standard", normal), ("foil", holo), ("parallel", reverse)) if v is not None}
+
+
+def _unit_price(prices, finish):
+    """One copy in this finish. Falls back to the card's other price when that finish has none:
+    the scanner files every copy as normal, and a holo-only rare has no Normal price."""
+    return prices.get(finish) or next(iter(prices.values()), None)
+
+
+def set_values(db):
+    """{set_id: market value of every owned copy} (current scan + earlier batches)."""
+    fin = owned_finishes(db)
+    out = {}
+    for i, set_id, *p in db.execute(f"SELECT c.id, c.set_id, {PRICE_COLS} FROM cards c WHERE c.id IN ({','.join('?' * len(fin))})", list(fin)):
+        prices = _finish_prices(*p)
+        out[set_id] = out.get(set_id, 0) + sum(q * (_unit_price(prices, f) or 0) for f, q in fin[i].items())
+    return out
+
+
+def _game(card_id):
+    return (card_id or "").split(":", 1)[0]
+
+
 def _card_dict(row, fin):
-    i, n, num, r, img, cur, prev, sn, rel = row
-    possible, known = possible_finishes(r, rel)
+    i, n, num, r, img, cur, prev, sn, rel, *p = row
+    possible, known = possible_finishes(r, rel, _game(i))
     owned = fin.get(i, {})
     # a finish we own but that rarity says is impossible (rarity data is imperfect): still show it
     for f in owned:
         if f not in possible:
             possible = possible + [f]
+    prices = _finish_prices(*p)
+    main = max(owned, key=owned.get) if owned else (possible[0] if possible else "standard")
     return {"id": i, "name": n, "number": num, "rarity": r, "image": img, "current": cur, "earlier": prev,
-            "set": sn, "possible": possible, "finish_known": known, "finishes": owned}
+            "set": sn, "possible": possible, "finish_known": known, "finishes": owned,
+            "prices": prices, "price": _unit_price(prices, main),
+            "value": round(sum(q * (_unit_price(prices, f) or 0) for f, q in owned.items()), 2)}
 
 
 def card_finishes(card_id):
@@ -125,12 +188,12 @@ def card_finishes(card_id):
     db.close()
     if not row:
         return {"possible": [], "finishes": {}, "finish_known": False}
-    possible, known = possible_finishes(row[0], row[1])
+    possible, known = possible_finishes(row[0], row[1], _game(card_id))
     owned = fin.get(card_id, {})
     return {"possible": possible + [f for f in owned if f not in possible], "finishes": owned, "finish_known": known, "rarity": row[0]}
 
 
-def search_cards(q, include_missing=False, limit=400):
+def search_cards(q, include_missing=False, limit=400, game=None):
     """Search owned cards (or the whole catalog with include_missing) by card name,
     card number (leading zeros ignored) or set name, across every set."""
     q = q.strip()
@@ -144,10 +207,11 @@ def search_cards(q, include_missing=False, limit=400):
     join = "LEFT JOIN" if include_missing else "JOIN"
     like = f"%{fold(q)}%"
     rows = db.execute(f"""
-        SELECT c.id, c.name, c.number, c.rarity, c.image_url, COALESCE(o.cur, 0), COALESCE(o.prev, 0), s.name, s.release_date
+        SELECT c.id, c.name, c.number, c.rarity, c.image_url, COALESCE(o.cur, 0), COALESCE(o.prev, 0), s.name, s.release_date, {PRICE_COLS}
         FROM cards c {join} ({OWNED_SQL}) o ON o.card_id = c.id LEFT JOIN sets s ON s.id = c.set_id
-        WHERE fold(c.name) LIKE ? OR fold(s.name) LIKE ? OR LTRIM(c.number, '0') = LTRIM(?, '0')
-        ORDER BY s.release_date DESC, s.name, c.id LIMIT ?""", (like, like, q, limit + 1)).fetchall()
+        WHERE (fold(c.name) LIKE ? OR fold(s.name) LIKE ? OR LTRIM(c.number, '0') = LTRIM(?, '0'))
+          AND (? IS NULL OR c.game_id = ?)
+        ORDER BY s.release_date DESC, s.name, c.id LIMIT ?""", (like, like, q, game, game, limit + 1)).fetchall()
     fin = owned_finishes(db)
     db.close()
     return {"cards": [_card_dict(r, fin) for r in rows[:limit]], "truncated": len(rows) > limit}
@@ -160,7 +224,7 @@ def set_cards(set_id, include_missing=False):
     db = _owned_db()
     join = "LEFT JOIN" if include_missing else "JOIN"
     rows = db.execute(f"""
-        SELECT c.id, c.name, c.number, c.rarity, c.image_url, COALESCE(o.cur, 0), COALESCE(o.prev, 0), s.name, s.release_date
+        SELECT c.id, c.name, c.number, c.rarity, c.image_url, COALESCE(o.cur, 0), COALESCE(o.prev, 0), s.name, s.release_date, {PRICE_COLS}
         FROM cards c {join} ({OWNED_SQL}) o ON o.card_id = c.id LEFT JOIN sets s ON s.id = c.set_id WHERE c.set_id = ?""", (set_id,)).fetchall()
     total = db.execute("SELECT printed_total, total FROM sets WHERE id = ?", (set_id,)).fetchone()
     fin = owned_finishes(db)
@@ -221,7 +285,7 @@ def control_status():
     return {"camera": cam, "scanner": bool(pids_of("scanner")),
             "phone_streaming": age is not None and age < 4, "phone_age": age,
             "phone_url": f"https://{lan_ip()}:8443", "live_scans": live,
-            "batches": merged[0], "copies": merged[1], "setup": setup_counts(), "data_dir": str(PROJECT)}
+            "batches": merged[0], "copies": merged[1], "setup": setup_counts(), "prices": dict(PRICES), "data_dir": str(PROJECT)}
 
 
 def control_action(path, req):
@@ -261,16 +325,21 @@ def control_action(path, req):
         return {"ok": True, "message": "TCG Catalog has been closed. You can close this tab."}
     elif path == "/api/setup":
         return start_setup(req.get("kind", "seed"))
+    elif path == "/api/prices":
+        return start_prices()
     elif path == "/api/backup":
         dest = f"collection.db.backup-{time.strftime('%Y%m%d-%H%M')}"
         shutil.copy(PROJECT / DB, PROJECT / dest)
         return {"ok": True, "message": f"Backed up to {dest}"}
-    elif path == "/api/finish-batch":
+    elif path in ("/api/finish-batch", "/api/discard-batch"):
         if pids_of("scanner"):
             _torch_off()
             _stop("scanner")
-        r = subprocess.run(appenv.command("finish-batch"), cwd=PROJECT, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180, **appenv.NO_WINDOW)
+        args = ["--discard"] if path == "/api/discard-batch" else []
+        r = subprocess.run(appenv.command("finish-batch", *args), cwd=PROJECT, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180, **appenv.NO_WINDOW)
         msg = (r.stdout + r.stderr).strip() or "done"
+        if r.returncode == 0 and path == "/api/finish-batch":
+            start_prices()   # price the cards this batch added
         return {"ok": r.returncode == 0, "message": msg}
     else:
         return {"ok": False, "error": "unknown action"}
@@ -279,14 +348,30 @@ def control_action(path, req):
 
 # ---------------------------------------------------------------------------
 # First-run setup (Home page): the scanner needs the card catalog + recognition fingerprints.
-#  * "seed"   -- load data/catalog_pokemon.json.gz shipped with the app (seconds, no internet)
-#  * "update" -- download the latest catalog and fingerprint any new cards (needs internet;
+#  * "seed"   -- load the data/catalog_<game>.json.gz files shipped with the app (seconds, no internet)
+#  * "update" -- download the latest catalog of every game and fingerprint any new cards (needs internet;
 #               only new sets take time -- a full build from scratch is ~30-40 min)
 # Runs in a background thread; progress is reported through /api/status -> "setup".
 # ---------------------------------------------------------------------------
 import gzip, threading, re
 
-SEED = appenv.APP_DIR / "data" / "catalog_pokemon.json.gz"
+SEEDS = sorted((appenv.APP_DIR / "data").glob("catalog_*.json.gz"))   # one per game (tools/make_seed.py)
+GAME_NAMES = {"pokemon": "Pokémon TCG", "onepiece": "One Piece Card Game"}
+
+
+def _seed_game(path):
+    return path.name[len("catalog_"):-len(".json.gz")]
+
+
+def missing_seed_games():
+    """Games that ship a seed file but have no fingerprints in this database yet
+    (first start, or an update that added a game to an existing install)."""
+    db = sqlite3.connect(DB)
+    core.schema(db)
+    have = {g for (g,) in db.execute("SELECT DISTINCT c.game_id FROM card_hashes h JOIN cards c ON c.id = h.card_id")}
+    db.close()
+    return [p for p in SEEDS if _seed_game(p) not in have]
+
 SETUP = {"running": False, "kind": None, "phase": "", "done": 0, "total": 0, "message": "", "error": None, "ok": None}
 
 
@@ -296,7 +381,7 @@ def setup_counts():
     cards = db.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
     hashed = db.execute("SELECT COUNT(*) FROM card_hashes").fetchone()[0]
     db.close()
-    return {"catalog_cards": cards, "hashed_cards": hashed, "seed_available": SEED.exists(),
+    return {"catalog_cards": cards, "hashed_cards": hashed, "seed_available": bool(SEEDS),
             "ready": hashed > 0, **{k: SETUP[k] for k in ("running", "kind", "phase", "done", "total", "message", "error", "ok")}}
 
 
@@ -307,23 +392,30 @@ def _setup_job(kind):
         core.schema(db)
         db.execute("INSERT OR IGNORE INTO games VALUES (?,?)", ("pokemon", "Pokémon TCG"))
         if kind == "seed":
-            SETUP.update(phase="Reading the bundled card data")
-            with gzip.open(SEED, "rt", encoding="utf-8") as f:
-                data = json.load(f)
-            db.executemany("INSERT OR IGNORE INTO sets (id, game_id, name, series, release_date, printed_total, total) VALUES (?,?,?,?,?,?,?)", data["sets"])
-            cards, hashes = data["cards"], data["hashes"]
-            SETUP.update(phase="Adding cards", total=len(cards) + len(hashes))
-            for k in range(0, len(cards), 2000):
-                for c in cards[k:k + 2000]:
-                    core.add_card(db, *c)
-                db.commit()
-                SETUP.update(done=min(k + 2000, len(cards)))
-            SETUP.update(phase="Adding recognition fingerprints")
-            for k in range(0, len(hashes), 4000):
-                db.executemany("INSERT OR IGNORE INTO card_hashes VALUES (?,?,?)", hashes[k:k + 4000])
-                db.commit()
-                SETUP.update(done=len(cards) + min(k + 4000, len(hashes)))
-            SETUP.update(message=f"Installed {len(cards):,} cards and {len(hashes):,} fingerprints.")
+            n_cards = n_hashes = 0
+            for path in SEEDS:
+                game = _seed_game(path)
+                SETUP.update(phase=f"Reading the bundled card data ({GAME_NAMES.get(game, game)})", done=0, total=0)
+                with gzip.open(path, "rt", encoding="utf-8") as f:
+                    data = json.load(f)
+                db.execute("INSERT OR IGNORE INTO games VALUES (?,?)", (game, data.get("game_name") or GAME_NAMES.get(game, game)))
+                db.executemany("INSERT OR IGNORE INTO sets (id, game_id, name, series, release_date, printed_total, total) VALUES (?,?,?,?,?,?,?)", data["sets"])
+                cards, hashes = data["cards"], data["hashes"]
+                SETUP.update(phase=f"Adding {GAME_NAMES.get(game, game)} cards", total=len(cards) + len(hashes))
+                for k in range(0, len(cards), 2000):
+                    for c in cards[k:k + 2000]:
+                        core.add_card(db, *c[:7])
+                        if len(c) > 7 and c[7] is not None:   # seed format 2: catalog price (One Piece)
+                            db.execute("UPDATE cards SET tcg_market_normal = ?, price_updated = ? WHERE id = ?", (c[7], c[8], c[0]))
+                    db.commit()
+                    SETUP.update(done=min(k + 2000, len(cards)))
+                SETUP.update(phase=f"Adding {GAME_NAMES.get(game, game)} recognition fingerprints")
+                for k in range(0, len(hashes), 4000):
+                    db.executemany("INSERT OR IGNORE INTO card_hashes VALUES (?,?,?)", hashes[k:k + 4000])
+                    db.commit()
+                    SETUP.update(done=len(cards) + min(k + 4000, len(hashes)))
+                n_cards, n_hashes = n_cards + len(cards), n_hashes + len(hashes)
+            SETUP.update(message=f"Installed {n_cards:,} cards and {n_hashes:,} fingerprints.")
         else:
             import catalog_sync, build_hash_index
             SETUP.update(phase="Downloading the latest card list")
@@ -332,7 +424,9 @@ def _setup_job(kind):
                 if m:
                     SETUP.update(done=int(m.group(1)), total=int(m.group(2)))
                 SETUP.update(message=msg)
-            catalog_sync.sync_pokemon(db, on_progress=on_cat)
+            for game, adapter in catalog_sync.ADAPTERS.items():
+                SETUP.update(phase=f"Downloading the latest {GAME_NAMES.get(game, game)} card list", done=0, total=0)
+                adapter(db, on_progress=on_cat)
             SETUP.update(phase="Fingerprinting new cards", done=0, total=0)
             n = build_hash_index.build(db, on_progress=lambda i, total, msg: SETUP.update(done=i, total=total, message=msg))
             SETUP.update(message=f"Catalog updated; {n} new card(s) fingerprinted.")
@@ -350,9 +444,51 @@ def _setup_job(kind):
 def start_setup(kind):
     if SETUP["running"]:
         return {"ok": False, "error": "setup is already running"}
-    if kind == "seed" and not SEED.exists():
-        return {"ok": False, "error": "bundled card data (data/catalog_pokemon.json.gz) is missing -- use Update instead"}
+    if kind == "seed" and not SEEDS:
+        return {"ok": False, "error": "bundled card data (data/catalog_*.json.gz) is missing -- use Update instead"}
     threading.Thread(target=_setup_job, args=(kind,), daemon=True).start()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Market prices (prices.py): refreshed in the background once a day on start, after every
+# finished batch, and from Home's "Update prices". Progress goes out through /api/status -> "prices".
+# ---------------------------------------------------------------------------
+PRICES_STAMP = ".prices_updated"   # date of the last successful refresh
+PRICES = {"running": False, "message": "", "error": None, "updated": None}
+
+
+def _prices_date():
+    try:
+        return (PROJECT / PRICES_STAMP).read_text().strip()
+    except OSError:
+        return None
+
+
+def _prices_job():
+    import prices
+    PRICES.update(running=True, message="Starting", error=None)
+    try:
+        db = _owned_db()   # makes sure prior_collection exists on a fresh install
+        core.schema(db)
+        res = prices.update_all(db, on_progress=lambda m: PRICES.update(message=m))
+        db.close()
+        errors = [f"{GAME_NAMES.get(g, g)}: {r['error']}" for g, r in res.items() if "error" in r]
+        if errors:
+            PRICES.update(error="; ".join(errors))
+        else:
+            (PROJECT / PRICES_STAMP).write_text(time.strftime("%Y-%m-%d"))
+        PRICES.update(message=f"{sum(r.get('priced', 0) for r in res.values()):,} cards priced")
+    except Exception as e:
+        PRICES.update(error=f"{e.__class__.__name__}: {e}")
+    finally:
+        PRICES.update(running=False, updated=_prices_date())
+
+
+def start_prices():
+    if PRICES["running"]:
+        return {"ok": False, "error": "prices are already updating"}
+    threading.Thread(target=_prices_job, daemon=True).start()
     return {"ok": True}
 
 
@@ -386,7 +522,7 @@ def build_data(db):
     prior = {tuple(r) for r in db.execute(
         "SELECT card_id, variant, condition, language FROM prior_collection")}
     rows = db.execute("""
-        SELECT sl.id, sl.card_id, sl.raw_name, sl.raw_number, sl.raw_variant, sl.variant, sl.qty,
+        SELECT sl.id, sl.card_id, sl.raw_name, COALESCE(sl.raw_number, c.number), sl.raw_variant, sl.variant, sl.qty,
                sl.reason, sl.condition, sl.language,
                s.name AS set_name, c.image_url, c.name AS resolved_name, g.name AS game_name
         FROM scan_log sl
@@ -421,6 +557,7 @@ def build_data(db):
             "check_foil": check_foil,
             "set": set_name,
             "game": game_name,
+            "game_id": _game(card_id) if card_id else None,
             "image": image_url,
             "needs_review": set_name is None,
             "reason": reason,
@@ -544,6 +681,24 @@ def do_set_variant(scan_id, variant):
     except Exception as e:
         return {"ok": False, "error": repr(e)}
 
+def do_set_printing(scan_id, card_id):
+    """Sorter's Printing picker: move a scan to another printing of the same card."""
+    db = sqlite3.connect(DB)
+    try:
+        if not db.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,)).fetchone():
+            return {"ok": False, "error": f"unknown card {card_id}"}
+        if not core.set_card(db, scan_id, card_id):
+            return {"ok": False, "error": f"scan id {scan_id} not found"}
+        core.report(db)
+        cards = build_data(db)
+        Path("viewer_data.json").write_text(json.dumps(cards))
+        return {"ok": True, "count": len(cards)}
+    except Exception as e:
+        return {"ok": False, "error": repr(e)}
+    finally:
+        db.close()
+
+
 def local_csvs():
     """CSVs sitting directly in the project folder -- e.g. dropped there by a
     phone sync tool -- so they can be picked without an OS file browser."""
@@ -627,6 +782,8 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(local_csvs()); return
         if self.path.startswith("/owned-sets"):
             self._send_json(owned_sets()); return
+        if self.path.startswith("/games"):
+            self._send_json(games()); return
         if self.path.startswith("/api/status"):
             self._send_json(control_status()); return
         if self.path.startswith("/api/phone-qr.svg"):
@@ -645,10 +802,13 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path.startswith("/card-finishes"):
             from urllib.parse import urlparse, parse_qs
             self._send_json(card_finishes(parse_qs(urlparse(self.path).query).get("id", [""])[0])); return
+        if self.path.startswith("/printings"):
+            from urllib.parse import urlparse, parse_qs
+            self._send_json(printings(parse_qs(urlparse(self.path).query).get("id", [""])[0])); return
         if self.path.startswith("/search-cards"):
             from urllib.parse import urlparse, parse_qs
             q = parse_qs(urlparse(self.path).query)
-            self._send_json(search_cards(q.get("q", [""])[0], q.get("missing", ["0"])[0] == "1")); return
+            self._send_json(search_cards(q.get("q", [""])[0], q.get("missing", ["0"])[0] == "1", game=q.get("game", [None])[0] or None)); return
         if self.path.startswith("/set-cards"):
             from urllib.parse import urlparse, parse_qs
             q = parse_qs(urlparse(self.path).query)
@@ -703,6 +863,12 @@ class Handler(SimpleHTTPRequestHandler):
             if not isinstance(scan_id, int) or not isinstance(variant, str):
                 self._send_json({"ok": False, "error": "missing/invalid id or variant"}); return
             self._send_json(do_set_variant(scan_id, variant))
+        elif self.path == "/set-printing":
+            length = int(self.headers.get("Content-Length", 0))
+            req = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(req.get("id"), int) or not isinstance(req.get("card_id"), str):
+                self._send_json({"ok": False, "error": "missing/invalid id or card_id"}); return
+            self._send_json(do_set_printing(req["id"], req["card_id"]))
         else:
             self.send_error(404)
 
@@ -717,8 +883,11 @@ def main():
     _db.commit(); _db.close()
     if not Path("viewer_data.json").exists():
         Path("viewer_data.json").write_text("[]")
-    if not setup_counts()["ready"] and SEED.exists():   # first start: load the bundled cards right away
+    if missing_seed_games():   # first start, or this version added a game: load the bundled cards right away
         start_setup("seed")
+    PRICES["updated"] = _prices_date()
+    if PRICES["updated"] != time.strftime("%Y-%m-%d"):   # once a day
+        start_prices()
     port = free_port()
     print(f"Serving at http://localhost:{port}/ -- control panel on the home page.", flush=True)
     (PROJECT / ".sort_viewer_port").write_text(str(port))  # lets the launcher find a running instance

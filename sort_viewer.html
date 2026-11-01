@@ -63,12 +63,15 @@
             <div class="label">Put it in</div>
             <div id="setbox" class="setbadge"></div>
             <div id="finCur" class="fin"></div>
-            <div class="label">Finish</div>
-            <div class="seg" id="variantRow">
-              <button data-variant="regular">Regular</button>
-              <button data-variant="holofoil">Holofoil</button>
-              <button data-variant="reverse holofoil">Reverse holo</button>
+            <div id="finishWrap">
+              <div class="label">Finish</div>
+              <div class="seg" id="variantRow">
+                <button data-variant="regular">Regular</button>
+                <button data-variant="holofoil">Holofoil</button>
+                <button data-variant="reverse holofoil">Reverse holo</button>
+              </div>
             </div>
+            <div id="printWrap" style="display:none"></div>
             <div id="variantErr"></div>
             <button class="btn btn-danger btn-sm" id="deleteBtn"><i data-icon="trash"></i>Wrong card — delete</button>
             <div id="deleteErr"></div>
@@ -175,6 +178,11 @@ function render() {
   sb.className = "setbadge" + (c.needs_review ? " review" : "");
   showFinishes($("finCur"), c.card_id, true);
   $("variantErr").textContent = "";
+  $("finishWrap").style.display = usesFinishButtons(c) ? "" : "none";
+  showPrintings($("printWrap"), c, async () => {
+    allCards = await (await fetch("viewer_data.json?t=" + Date.now())).json();
+    applyMode(); render();
+  }, $("variantErr"));
   document.querySelectorAll("#variantRow button").forEach(btn => btn.classList.toggle("active", normVariantLabel(btn.dataset.variant) === c.norm_variant));
 }
 function normVariantLabel(label) {   // mirrors ingest_delver.norm_variant() for these 3 labels
