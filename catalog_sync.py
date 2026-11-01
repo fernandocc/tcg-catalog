@@ -99,11 +99,76 @@ def sync_onepiece(db, on_progress=lambda msg: print(msg)):
         db.execute("UPDATE cards SET name = ?, rarity = ?, image_url = COALESCE(?, image_url), tcg_market_normal = ?, price_updated = ? WHERE id = ?",
                    (c.get("card_name"), c.get("rarity"), image, price, c.get("date_scraped") or today, card_id))
         counts[set_code] = counts.get(set_code, 0) + 1
+    added = _onepiece_from_tcgcsv(db, sets, counts, on_progress)
     for order, (sid, name) in enumerate(sets, 1):
         db.execute("""INSERT OR REPLACE INTO sets (id, game_id, name, series, release_date, printed_total, total)
             VALUES (?,?,?,?,NULL,?,?)""", (f"{GAME}:{sid}", GAME, name, f"One Piece {order:02d}", counts.get(sid), counts.get(sid)))
     db.commit()
-    on_progress(f"[{GAME}] {len(seen)} printings in {len(sets)} sets")
+    on_progress(f"[{GAME}] {len(seen) + added} printings in {len(sets)} sets")
+
+
+def _onepiece_from_tcgcsv(db, sets, counts, on_progress):
+    """Top up One Piece with card numbers optcgapi doesn't list yet (it lags new releases by days or
+    weeks: EB-05 was on TCGplayer the day it came out). Source: TCGCSV, TCGplayer's catalog mirror
+    (category 68). The plain product of a number becomes the base printing `onepiece:<number>` --
+    the same id optcgapi will use, so it simply takes over later; other products (parallels, alt
+    art...) get `onepiece:<number>_tcg<productId>`, and once optcgapi covers that number (with its own
+    _p1.. ids) those stand-ins are dropped unless you own one. Returns the number of printings added."""
+    import re
+    import prices
+    GAME = "onepiece"
+    have = {n for (n,) in db.execute("SELECT number FROM cards WHERE game_id = ? AND id NOT LIKE '%\\_tcg%' ESCAPE '\\'", (GAME,))}
+    owned = "SELECT card_id FROM collection UNION SELECT card_id FROM prior_collection" \
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'prior_collection'").fetchone() else "SELECT card_id FROM collection"
+    stale = [i for (i,) in db.execute(f"""SELECT id FROM cards WHERE game_id = ? AND id LIKE '%\\_tcg%' ESCAPE '\\'
+                                          AND id NOT IN ({owned})""", (GAME,)) if i.split(":", 1)[1].split("_tcg")[0] in have]
+    for i in stale:
+        db.execute("DELETE FROM card_hashes WHERE card_id = ?", (i,))
+        db.execute("DELETE FROM cards WHERE id = ?", (i,))
+    try:
+        groups = prices._get(f"{prices.TCGCSV}/68/groups")
+    except Exception as e:
+        on_progress(f"[{GAME}] TCGCSV unreachable, skipping new-release top-up ({e.__class__.__name__})")
+        return 0
+    known = {sid for sid, _ in sets}
+    today, added = time.strftime("%Y-%m-%d"), 0
+    for g in sorted(groups, key=lambda g: g["publishedOn"]):
+        try:
+            products = prices._get(f"{prices.TCGCSV}/68/{g['groupId']}/products")
+        except Exception:
+            continue
+        by_num = {}
+        for pr in products:
+            ext = {e["name"]: e["value"] for e in pr.get("extendedData", [])}
+            num = ext.get("Number", "")
+            if re.fullmatch(r"[A-Z]+\d*-\d+", num) and num not in have:
+                by_num.setdefault(num, []).append((pr, ext))
+        if not by_num:
+            continue
+        if "promotion" in g["name"].lower():
+            set_code = "P"
+        else:
+            abbr = (g.get("abbreviation") or "").split()[0] if g.get("abbreviation") else ""
+            set_code = re.sub(r"^([A-Z]+)(\d+)$", r"\1-\2", abbr) or str(g["groupId"])
+        if set_code not in known:
+            sets.append((set_code, g["name"])); known.add(set_code)
+        try:
+            market = {p["productId"]: p["marketPrice"] for p in prices._get(f"{prices.TCGCSV}/68/{g['groupId']}/prices") if p.get("marketPrice")}
+        except Exception:
+            market = {}
+        for num, items in by_num.items():
+            items.sort(key=lambda t: ("(" in t[0]["name"], t[0]["productId"]))   # plain name first = base printing
+            for k, (pr, ext) in enumerate(items):
+                card_id = f"{GAME}:{num}" if k == 0 else f"{GAME}:{num}_tcg{pr['productId']}"
+                image = (pr.get("imageUrl") or "").replace("_200w.", "_400w.") or None
+                core.add_card(db, card_id, GAME, f"{GAME}:{set_code}", pr["name"], num, ext.get("Rarity"), image)
+                db.execute("UPDATE cards SET tcg_market_normal = ?, price_updated = ? WHERE id = ?",
+                           (market.get(pr["productId"]), today, card_id))
+                counts[set_code] = counts.get(set_code, 0) + 1
+                added += 1
+            have.add(num)
+        on_progress(f"[{GAME}] TCGCSV {g['name']}: +{sum(len(v) for v in by_num.values())} printings optcgapi doesn't list yet")
+    return added
 
 ADAPTERS = {
     "pokemon": sync_pokemon,

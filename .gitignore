@@ -38,3 +38,5 @@ dist/
 .publish_blocklist
 build/
 .prices_updated
+scan_prefs.json
+.seeds_loaded

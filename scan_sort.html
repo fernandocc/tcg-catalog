@@ -29,6 +29,11 @@
   #dupBanner { margin-bottom: 14px; }
   .nav { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
   #err { color: var(--bad); font-size: 0.85rem; min-height: 1.1em; }
+  #sdmBox { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #sdmBox label { font-size: 0.8rem; color: var(--text-2); }
+  #sdm { width: auto; max-width: min(260px, 100%); height: 36px; }
+  #sdmBox { max-width: 100%; }
+  #sdmBox.on #sdm { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(139,124,255,0.5); }
 
   #histPanel { margin-top: 18px; }
   #recent { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; scroll-snap-type: x proximity; }
@@ -49,6 +54,9 @@
       <div class="sub">Feed a card, wait for the ping, drop it in the set shown.</div>
     </div>
     <div class="actions">
+      <span id="sdmBox" title="Scanning one starter deck (or reprint set)? Its reprints look exactly like the original printings to the camera; this files them under the deck instead."><label for="sdm">Starter deck mode</label>
+        <select id="sdm" class="field"><option value="">Off</option></select>
+        <button class="btn btn-sm" id="sdmApply" style="display:none"></button></span>
       <span class="hint" id="sndNote"></span>
       <button class="btn" id="snd" title="Also ping on this computer (the phone already pings)"></button>
       <button class="btn" id="repBtn"><i data-icon="report"></i>Report</button>
@@ -91,6 +99,7 @@
               </div>
             </div>
             <div id="printWrap" style="display:none"></div>
+            <div id="qtyWrap"></div>
             <div class="nav">
               <button class="btn btn-sm" id="prev"><i data-icon="left"></i>Back</button>
               <button class="btn btn-sm" id="newest">Newest<i data-icon="skip"></i></button>
@@ -201,6 +210,7 @@ function render() {
   $("err").textContent = "";
   $("finishWrap").style.display = usesFinishButtons(c) ? "" : "none";
   showPrintings($("printWrap"), c, async () => { await loadCards(); render(); }, $("err"));
+  showCopies($("qtyWrap"), c, async () => { await loadCards(); render(); }, $("err"));
   resetDelete();
 }
 function variantKey(l) { return l === "reverse holofoil" ? "reverse" : l === "holofoil" ? "holo" : "normal"; }
@@ -218,7 +228,12 @@ $("recent").addEventListener("click", e => { const h = e.target.closest(".h"); i
 $("prev").onclick = () => { if (i > 0) { i--; render(); } };
 $("newest").onclick = () => { i = cards.length - 1; render(); };
 document.addEventListener("keydown", e => {
-  if (e.target && e.target.tagName === "INPUT") return;
+  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "SELECT")) return;
+  if ((e.key === "+" || e.key === "=" || e.key === "-") && cards[i]) {   // +/- copies of the card on screen
+    e.preventDefault();
+    changeCopies(cards[i], (cards[i].qty || 1) + (e.key === "-" ? -1 : 1), async () => { await loadCards(); render(); }, $("err"));
+    return;
+  }
   if (e.code === "ArrowLeft" || e.code === "Backspace") { e.preventDefault(); if (i > 0) { i--; render(); } }
   else if (e.code === "ArrowRight" || e.code === "Space") { e.preventDefault(); if (i < cards.length - 1) { i++; render(); } }
 });
@@ -240,6 +255,29 @@ $("deleteBtn").onclick = async () => {
   } catch (e) { $("err").textContent = String(e); resetDelete(); }
 };
 async function loadCards() { cards = await (await fetch("viewer_data.json?t=" + Date.now())).json(); }
+
+/* ---------- starter deck mode (scan_prefs.json; the scanner re-reads it on every add) ---------- */
+async function loadSdm() {
+  try {
+    const p = await (await fetch("/api/scan-prefs?t=" + Date.now())).json();
+    $("sdm").innerHTML = '<option value="">Off</option>' + p.sets.map(x =>
+      '<option value="' + esc(x.id) + '"' + (x.id === p.prefer_set ? " selected" : "") + ">" + esc(x.name) + " (" + x.reprints + ")</option>").join("");
+    $("sdmBox").classList.toggle("on", !!p.prefer_set);
+  } catch (e) {}
+}
+async function setSdm(apply) {
+  const prefer = $("sdm").value;
+  const r = await AppCtl.api("/api/scan-prefs", { prefer_set: prefer, apply });
+  $("sdmBox").classList.toggle("on", !!prefer);
+  const b = $("sdmApply");
+  b.style.display = r.would_change ? "" : "none";
+  b.textContent = "Also switch " + r.would_change + " earlier scan" + (r.would_change === 1 ? "" : "s");
+  if (apply) { AppCtl.say("Moved " + r.applied + " scan" + (r.applied === 1 ? "" : "s") + " to " + $("sdm").selectedOptions[0].text.replace(/ \(\d+\)$/, "") + "."); await loadCards(); render(); }
+  else if (prefer) AppCtl.say("Starter deck mode on: cards with a printing in " + $("sdm").selectedOptions[0].text.replace(/ \(\d+\)$/, "") + " are filed there.", 6000);
+}
+$("sdm").onchange = () => setSdm(false);
+$("sdmApply").onclick = () => setSdm(true);
+loadSdm();
 
 /* ---------- live camera + new-card detection ---------- */
 let lastFrameOk = 0;

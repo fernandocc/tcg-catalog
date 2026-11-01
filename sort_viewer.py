@@ -327,6 +327,8 @@ def control_action(path, req):
         return start_setup(req.get("kind", "seed"))
     elif path == "/api/prices":
         return start_prices()
+    elif path == "/api/scan-prefs":
+        return set_scan_prefs(req)
     elif path == "/api/backup":
         dest = f"collection.db.backup-{time.strftime('%Y%m%d-%H%M')}"
         shutil.copy(PROJECT / DB, PROJECT / dest)
@@ -363,14 +365,31 @@ def _seed_game(path):
     return path.name[len("catalog_"):-len(".json.gz")]
 
 
+SEEDS_LOADED = ".seeds_loaded"   # {game: sha256 of the seed file last loaded into this database}
+
+
+def _seed_sha(path):
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _seeds_loaded():
+    try:
+        return json.loads((PROJECT / SEEDS_LOADED).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
 def missing_seed_games():
-    """Games that ship a seed file but have no fingerprints in this database yet
-    (first start, or an update that added a game to an existing install)."""
+    """Seed files this database hasn't loaded yet: first start, an update that added a game, or an
+    update whose seed carries new cards (e.g. a set released after the previous version). Loading
+    only inserts what's missing, so loading one again is harmless."""
     db = sqlite3.connect(DB)
     core.schema(db)
     have = {g for (g,) in db.execute("SELECT DISTINCT c.game_id FROM card_hashes h JOIN cards c ON c.id = h.card_id")}
     db.close()
-    return [p for p in SEEDS if _seed_game(p) not in have]
+    loaded = _seeds_loaded()
+    return [p for p in SEEDS if _seed_game(p) not in have or loaded.get(_seed_game(p)) != _seed_sha(p)]
 
 SETUP = {"running": False, "kind": None, "phase": "", "done": 0, "total": 0, "message": "", "error": None, "ok": None}
 
@@ -385,7 +404,7 @@ def setup_counts():
             "ready": hashed > 0, **{k: SETUP[k] for k in ("running", "kind", "phase", "done", "total", "message", "error", "ok")}}
 
 
-def _setup_job(kind):
+def _setup_job(kind, seeds=None):
     SETUP.update(running=True, kind=kind, phase="Starting", done=0, total=0, message="", error=None, ok=None)
     try:
         db = sqlite3.connect(DB)
@@ -393,7 +412,7 @@ def _setup_job(kind):
         db.execute("INSERT OR IGNORE INTO games VALUES (?,?)", ("pokemon", "Pokémon TCG"))
         if kind == "seed":
             n_cards = n_hashes = 0
-            for path in SEEDS:
+            for path in seeds or SEEDS:
                 game = _seed_game(path)
                 SETUP.update(phase=f"Reading the bundled card data ({GAME_NAMES.get(game, game)})", done=0, total=0)
                 with gzip.open(path, "rt", encoding="utf-8") as f:
@@ -406,7 +425,8 @@ def _setup_job(kind):
                     for c in cards[k:k + 2000]:
                         core.add_card(db, *c[:7])
                         if len(c) > 7 and c[7] is not None:   # seed format 2: catalog price (One Piece)
-                            db.execute("UPDATE cards SET tcg_market_normal = ?, price_updated = ? WHERE id = ?", (c[7], c[8], c[0]))
+                            db.execute("""UPDATE cards SET tcg_market_normal = ?, price_updated = ?
+                                          WHERE id = ? AND (price_updated IS NULL OR price_updated < ?)""", (c[7], c[8], c[0], c[8]))
                     db.commit()
                     SETUP.update(done=min(k + 2000, len(cards)))
                 SETUP.update(phase=f"Adding {GAME_NAMES.get(game, game)} recognition fingerprints")
@@ -415,6 +435,9 @@ def _setup_job(kind):
                     db.commit()
                     SETUP.update(done=len(cards) + min(k + 4000, len(hashes)))
                 n_cards, n_hashes = n_cards + len(cards), n_hashes + len(hashes)
+                loaded = _seeds_loaded()
+                loaded[game] = _seed_sha(path)
+                (PROJECT / SEEDS_LOADED).write_text(json.dumps(loaded))
             SETUP.update(message=f"Installed {n_cards:,} cards and {n_hashes:,} fingerprints.")
         else:
             import catalog_sync, build_hash_index
@@ -441,12 +464,12 @@ def _setup_job(kind):
         SETUP.update(running=False)
 
 
-def start_setup(kind):
+def start_setup(kind, seeds=None):
     if SETUP["running"]:
         return {"ok": False, "error": "setup is already running"}
     if kind == "seed" and not SEEDS:
         return {"ok": False, "error": "bundled card data (data/catalog_*.json.gz) is missing -- use Update instead"}
-    threading.Thread(target=_setup_job, args=(kind,), daemon=True).start()
+    threading.Thread(target=_setup_job, args=(kind, seeds), daemon=True).start()
     return {"ok": True}
 
 
@@ -535,17 +558,20 @@ def build_data(db):
     for (scan_id, card_id, raw_name, number, raw_variant, variant, qty, reason,
          condition, language, set_name, image_url, resolved_name, game_name) in rows:
         row_qty_gt1 = bool(qty and qty > 1)  # this one scan already represents >1 physical copy
-        is_duplicate = row_qty_gt1
+        # Known Delver quirk: a qty>1 row with no Foil value can hide a normal+foil
+        # pair collapsed into one row (see Known caveats in CLAUDE.md) -- flag it
+        # specifically so it gets checked by eye instead of assumed "2 normals".
+        check_foil = row_qty_gt1 and not (raw_variant or "").strip()
+        is_duplicate = check_foil
         in_prior = False
         if card_id:
             key = (card_id, variant, condition, language)
             in_prior = key in prior
             is_duplicate = is_duplicate or key in seen or in_prior
             seen.add(key)
-        # Known Delver quirk: a qty>1 row with no Foil value can hide a normal+foil
-        # pair collapsed into one row (see Known caveats in CLAUDE.md) -- flag it
-        # specifically so it gets checked by eye instead of assumed "2 normals".
-        check_foil = row_qty_gt1 and not (raw_variant or "").strip()
+        # copies of this scan that go to the dupes pile: all of them for a duplicate; for a new
+        # card scanned once and bumped with + (qty 3), the first is new and the other 2 are extras
+        extra = (qty or 1) if is_duplicate else (qty or 1) - 1
         cards.append({
             "id": scan_id,
             "card_id": card_id,
@@ -562,6 +588,7 @@ def build_data(db):
             "needs_review": set_name is None,
             "reason": reason,
             "duplicate": is_duplicate,
+            "extra": extra,
             "in_prior_batch": in_prior,
         })
     return cards
@@ -681,6 +708,73 @@ def do_set_variant(scan_id, variant):
     except Exception as e:
         return {"ok": False, "error": repr(e)}
 
+def do_set_qty(scan_id, qty):
+    """Sorter's -/+ copies buttons."""
+    db = sqlite3.connect(DB)
+    try:
+        if not core.set_qty(db, scan_id, qty):
+            return {"ok": False, "error": "copies must be 1 or more (use Delete to remove the scan)"}
+        core.report(db)
+        cards = build_data(db)
+        Path("viewer_data.json").write_text(json.dumps(cards))
+        return {"ok": True, "count": len(cards)}
+    except Exception as e:
+        return {"ok": False, "error": f"{e.__class__.__name__}: {e}"}
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Starter deck mode: while scanning one starter deck / reprint set, the scanner files every
+# card that has a printing in that set under it (it can't see the difference -- same artwork).
+# Stored in scan_prefs.json, which live_scanner.py re-reads on every add.
+# ---------------------------------------------------------------------------
+SCAN_PREFS = "scan_prefs.json"
+
+
+def scan_prefs():
+    try:
+        prefs = json.loads((PROJECT / SCAN_PREFS).read_text())
+    except (OSError, ValueError):
+        prefs = {}
+    db = sqlite3.connect(DB)
+    # sets that hold reprints of cards first printed elsewhere (One Piece starter decks, PRB...)
+    rows = db.execute("""
+        SELECT s.id, s.name, s.series, COUNT(*) FROM cards c JOIN sets s ON s.id = c.set_id
+        WHERE EXISTS (SELECT 1 FROM cards o WHERE o.game_id = c.game_id AND o.number = c.number AND o.set_id != c.set_id)
+          AND c.game_id = 'onepiece'   -- printed numbers are unique per card only in One Piece (Pokemon's "1" repeats per set)
+          AND c.set_id NOT IN ('onepiece:P', 'onepiece:DON')
+        GROUP BY s.id ORDER BY s.series DESC""").fetchall()
+    db.close()
+    return {"prefer_set": prefs.get("prefer_set"),
+            "sets": [{"id": i, "name": n, "reprints": k} for i, n, _, k in rows]}
+
+
+def _preferred_switches(db, set_id):
+    """[(scan_id, card_id in set_id)] for this batch's scans that have a printing in set_id."""
+    return db.execute("""
+        SELECT sl.id, MIN(p.id) FROM scan_log sl JOIN cards c ON c.id = sl.card_id
+        JOIN cards p ON p.game_id = c.game_id AND p.number = c.number AND p.set_id = ?
+        WHERE c.set_id != ? GROUP BY sl.id""", (set_id, set_id)).fetchall()
+
+
+def set_scan_prefs(req):
+    prefer = req.get("prefer_set") or None
+    (PROJECT / SCAN_PREFS).write_text(json.dumps({"prefer_set": prefer}))
+    db = sqlite3.connect(DB)
+    try:
+        switches = _preferred_switches(db, prefer) if prefer else []
+        if req.get("apply") and switches:
+            for scan_id, card_id in switches:
+                core.set_card(db, scan_id, card_id)
+            core.report(db)
+            Path("viewer_data.json").write_text(json.dumps(build_data(db)))
+            return {"ok": True, "applied": len(switches), "would_change": 0}
+        return {"ok": True, "applied": 0, "would_change": len(switches)}
+    finally:
+        db.close()
+
+
 def do_set_printing(scan_id, card_id):
     """Sorter's Printing picker: move a scan to another printing of the same card."""
     db = sqlite3.connect(DB)
@@ -784,6 +878,8 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(owned_sets()); return
         if self.path.startswith("/games"):
             self._send_json(games()); return
+        if self.path.startswith("/api/scan-prefs"):
+            self._send_json(scan_prefs()); return
         if self.path.startswith("/api/status"):
             self._send_json(control_status()); return
         if self.path.startswith("/api/phone-qr.svg"):
@@ -863,6 +959,12 @@ class Handler(SimpleHTTPRequestHandler):
             if not isinstance(scan_id, int) or not isinstance(variant, str):
                 self._send_json({"ok": False, "error": "missing/invalid id or variant"}); return
             self._send_json(do_set_variant(scan_id, variant))
+        elif self.path == "/set-qty":
+            length = int(self.headers.get("Content-Length", 0))
+            req = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(req.get("id"), int) or not isinstance(req.get("qty"), int):
+                self._send_json({"ok": False, "error": "missing/invalid id or qty"}); return
+            self._send_json(do_set_qty(req["id"], req["qty"]))
         elif self.path == "/set-printing":
             length = int(self.headers.get("Content-Length", 0))
             req = json.loads(self.rfile.read(length) or b"{}")
@@ -883,8 +985,9 @@ def main():
     _db.commit(); _db.close()
     if not Path("viewer_data.json").exists():
         Path("viewer_data.json").write_text("[]")
-    if missing_seed_games():   # first start, or this version added a game: load the bundled cards right away
-        start_setup("seed")
+    stale = missing_seed_games()
+    if stale:   # first start, a new game, or this version's seed has new cards: load the bundled cards right away
+        start_setup("seed", stale)
     PRICES["updated"] = _prices_date()
     if PRICES["updated"] != time.strftime("%Y-%m-%d"):   # once a day
         start_prices()

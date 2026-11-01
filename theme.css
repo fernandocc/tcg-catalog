@@ -282,3 +282,9 @@ body.has-appbar { padding-top: var(--bar-h); }
 }
 #apptoast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 @media (max-width: 1100px) { #appbar .ab-stat .ab-label { display: none; } #appbar .ab-brand span { display: none; } }
+
+/* copies -/+ on the sorter card (shared.js showCopies) */
+.copies { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.copies .btn { width: 36px; padding: 0; justify-content: center; font-size: 1.1rem; }
+.copies b { min-width: 1.6em; text-align: center; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+.copies .cnote { color: var(--warn, #f5b84b); font-size: 0.82rem; }

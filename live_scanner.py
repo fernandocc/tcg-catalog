@@ -439,6 +439,26 @@ def _load_last_committed():
     except (FileNotFoundError, json.JSONDecodeError):
         return None
 
+def preferred_printing(card_id, name, set_name):
+    """Starter deck mode (Scan & Sort page -> scan_prefs.json, re-read on every add): if the
+    matched card also has a printing in the chosen set, file the scan under that printing --
+    a starter deck's reprints look exactly like the originals to the camera."""
+    try:
+        prefer = json.loads(Path("scan_prefs.json").read_text()).get("prefer_set")
+    except (OSError, ValueError):
+        prefer = None
+    if not prefer:
+        return card_id, name, set_name
+    db = sqlite3.connect(DB)
+    try:
+        row = db.execute("""SELECT p.id, p.name, s.name FROM cards c
+            JOIN cards p ON p.game_id = c.game_id AND p.number = c.number AND p.set_id = ?
+            JOIN sets s ON s.id = p.set_id WHERE c.id = ? ORDER BY p.id LIMIT 1""", (prefer, card_id)).fetchone()
+    finally:
+        db.close()
+    return tuple(row) if row else (card_id, name, set_name)
+
+
 def commit_card(card_id, name, set_name):
     db = sqlite3.connect(DB)
     try:
@@ -558,13 +578,13 @@ def main():
             cv2.drawContours(frame, [corners.astype(np.int32)], -1, (0, 255, 0) if match_card_id else (0, 0, 255), 2)
 
         if match_card_id and match_card_id != last_committed:
-            name, set_name = index["names"][match_i], index["sets"][match_i]
-            is_dup = commit_card(match_card_id, name, set_name)
+            add_id, name, set_name = preferred_printing(match_card_id, index["names"][match_i], index["sets"][match_i])
+            is_dup = commit_card(add_id, name, set_name)
             if cam_base:
                 send_ping(cam_base, is_dup)
             last_committed = match_card_id
             LAST_COMMITTED_PATH.write_text(json.dumps({"card_id": last_committed}))
-            last_added = {"name": name, "set": set_name, "at": time.strftime("%H:%M:%S"), "card_id": match_card_id}
+            last_added = {"name": name, "set": set_name, "at": time.strftime("%H:%M:%S"), "card_id": add_id}
             flash_text, flash_sub = f"ADDED: {name}", set_name
             flash_until = time.time() + 2
 

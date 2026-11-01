@@ -163,6 +163,25 @@ def set_card(db, scan_id, new_card_id):
     db.commit()
     return True
 
+def set_qty(db, scan_id, new_qty):
+    """Change how many physical copies one scan stands for (the sorter's -/+ buttons: scan one
+    copy, then bump it to 4 instead of feeding the same card four times). Adjusts the scan's
+    `collection` row by the difference."""
+    row = db.execute("SELECT card_id, variant, qty, condition, language FROM scan_log WHERE id=?",
+                      (scan_id,)).fetchone()
+    if not row or new_qty < 1:
+        return False
+    card_id, variant, qty, condition, language = row
+    if card_id and new_qty != qty:
+        _remove_collection_contribution(db, card_id, variant, qty, condition, language)
+        db.execute("""INSERT INTO collection VALUES (?,?,?,?,?)
+            ON CONFLICT(card_id, variant, condition, language)
+            DO UPDATE SET qty = qty + excluded.qty""",
+            (card_id, variant, condition, language, new_qty))
+    db.execute("UPDATE scan_log SET qty=? WHERE id=?", (new_qty, scan_id))
+    db.commit()
+    return True
+
 def ingest_live_scan(db, card_id, variant="normal", condition="NM", language="English"):
     """Commit one card identified by the live camera scanner. The card is
     already fully known (card_id came straight from the hash match against

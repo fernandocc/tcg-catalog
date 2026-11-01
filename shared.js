@@ -93,7 +93,8 @@ function batchReport(cards) {
     const rows = items.filter(x => !flt || fold(x.c.name + " " + (x.c.set || "")).includes(flt)).sort((a, b) => so.d * cmp(a, b));
     return '<div class="rbox"><table class="rt"><thead><tr>' + th("pos", "Scan #") + th("card", "Card") + th("set", "Set") + th("end", "From end") + "</tr></thead><tbody>" +
       rows.map(x => '<tr data-pos="' + x.pos + '"><td><a href="#" class="rj" data-pos="' + x.pos + '">#' + x.pos + "</a></td><td>" + esc(x.c.name) +
-        (x.c.number ? ' <span class="rpos">#' + esc(x.c.number) + "</span>" : "") + "</td><td>" + esc(x.c.set || "—") + "</td><td>" + (n - x.pos + 1) + "</td></tr>").join("") +
+        (x.c.number ? ' <span class="rpos">#' + esc(x.c.number) + "</span>" : "") +
+        (x.c.qty > 1 ? ' <span class="rpos">×' + x.c.qty + (x.c.duplicate ? "" : " — keep 1, " + x.c.extra + " to dupes") + "</span>" : "") + "</td><td>" + esc(x.c.set || "—") + "</td><td>" + (n - x.pos + 1) + "</td></tr>").join("") +
       "</tbody></table></div>";
   };
   const open = window.__rdOpen === false ? "" : " open";
@@ -200,6 +201,25 @@ async function showFinishes(el, cardId, force) {
    The camera can't tell same-artwork printings apart (base / reprint / Jolly Roger foil), so the
    scanner commits the base printing and this picker moves the scan to the right one. */
 function usesFinishButtons(c) { return !c || !c.game_id || c.game_id === "pokemon"; }
+/* ---------- copies: scan a card once, then set how many identical copies you're holding ---------- */
+function showCopies(wrap, c, onChanged, errEl) {
+  if (!wrap) return;
+  const q = c.qty || 1;
+  const note = q === 1 ? "" : c.duplicate ? "all " + q + " go in the dupes pile" : "keep 1 · " + c.extra + " extra to the dupes pile";
+  wrap.innerHTML = '<div class="label">Copies</div><div class="copies"><button class="btn btn-sm" data-d="-1"' + (q <= 1 ? " disabled" : "") +
+    ' title="One fewer copy">−</button><b>' + q + '</b><button class="btn btn-sm" data-d="1" title="One more identical copy (shortcut: +)">+</button>' +
+    (note ? '<span class="cnote">' + note + "</span>" : "") + "</div>";
+  wrap.querySelectorAll("button").forEach(b => b.onclick = () => changeCopies(c, q + Number(b.dataset.d), onChanged, errEl));
+}
+async function changeCopies(c, qty, onChanged, errEl) {
+  if (qty < 1) return;
+  try {
+    const d = await (await fetch("/set-qty", { method: "POST", body: JSON.stringify({ id: c.id, qty }) })).json();
+    if (!d.ok) { if (errEl) errEl.textContent = d.error; return; }
+    await onChanged();
+  } catch (err) { if (errEl) errEl.textContent = String(err); }
+}
+
 async function showPrintings(wrap, c, onChanged, errEl) {
   if (!wrap) return;
   if (usesFinishButtons(c) || !c.card_id) { wrap.style.display = "none"; wrap.innerHTML = ""; return; }
